@@ -132,7 +132,7 @@ class ConvTransformerBackbone(nn.Module):
 
         # training: using fixed length position embeddings
         if self.use_abs_pe and self.training:
-            assert T <= self.max_len, "Reached max length."
+            assert T <= self.max_len, "Reached max length." # this is 2304
             pe = self.pos_embd
             # add pe to x
             x = x + pe[:, :, :T] * mask.to(x.dtype)

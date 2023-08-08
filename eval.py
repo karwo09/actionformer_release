@@ -107,21 +107,32 @@ def main(args):
 
 ################################################################################
 if __name__ == '__main__':
-    """Entry Point"""
-    # the arg parser
-    parser = argparse.ArgumentParser(
-      description='Train a point-based transformer for action localization')
-    parser.add_argument('config', type=str, metavar='DIR',
-                        help='path to a config file')
-    parser.add_argument('ckpt', type=str, metavar='DIR',
-                        help='path to a checkpoint')
-    parser.add_argument('-epoch', type=int, default=-1,
-                        help='checkpoint epoch')
-    parser.add_argument('-t', '--topk', default=-1, type=int,
-                        help='max number of output actions (default: -1)')
-    parser.add_argument('--saveonly', action='store_true',
-                        help='Only save the ouputs without evaluation (e.g., for test set)')
-    parser.add_argument('-p', '--print-freq', default=10, type=int,
-                        help='print frequency (default: 10 iterations)')
-    args = parser.parse_args()
+    try:
+        """Entry Point"""
+        # the arg parser
+        parser = argparse.ArgumentParser(
+        description='Train a point-based transformer for action localization')
+        parser.add_argument('config', type=str, metavar='DIR',
+                            help='path to a config file')
+        parser.add_argument('ckpt', type=str, metavar='DIR',
+                            help='path to a checkpoint')
+        parser.add_argument('-epoch', type=int, default=-1,
+                            help='checkpoint epoch')
+        parser.add_argument('-t', '--topk', default=-1, type=int,
+                            help='max number of output actions (default: -1)')
+        parser.add_argument('--saveonly', action='store_true',
+                            help='Only save the ouputs without evaluation (e.g., for test set)')
+        parser.add_argument('-p', '--print-freq', default=10, type=int,
+                            help='print frequency (default: 10 iterations)')
+        print(parser.parse_args())
+        args = parser.parse_args()
+    except:
+        class Args:
+            ckpt = "./ckpt/thumos_i3d_reproduce"
+            config = "./configs/thumos_i3d_eval.yaml"
+            epoch = -1
+            topk = -1
+            saveonly = False
+            print_freq = 10
+        args = Args()
     main(args)

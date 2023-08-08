@@ -1,0 +1,6 @@
+numpy== 1.23
+pyyaml
+pandas==1.3.5
+h5py
+joblib
+tensorboard

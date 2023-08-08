@@ -264,18 +264,20 @@ class MaskedMHCA(nn.Module):
         # output projection
         self.proj = nn.Conv1d(self.n_embd, self.n_embd, 1)
 
-    def forward(self, x, mask):
+    def forward(self, x, mask, kv=None):
         # x: batch size, feature channel, sequence length,
         # mask: batch size, 1, sequence length (bool)
         B, C, T = x.size()
 
         # query conv -> (B, nh * hs, T')
-        q, qx_mask = self.query_conv(x, mask)
+        q = x # x is always the query
+        k = v = x if kv is None else kv # kv is the key and value if provided to do cross attention else self attention
+        q, qx_mask = self.query_conv(q, mask)
         q = self.query_norm(q)
         # key, value conv -> (B, nh * hs, T'')
-        k, kv_mask = self.key_conv(x, mask)
+        k, kv_mask = self.key_conv(k, mask)
         k = self.key_norm(k)
-        v, _ = self.value_conv(x, mask)
+        v, _ = self.value_conv(v, mask)
         v = self.value_norm(v)
 
         # projections
