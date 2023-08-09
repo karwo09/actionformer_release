@@ -128,7 +128,7 @@ if __name__ == '__main__':
         args = parser.parse_args()
     except:
         class Args:
-            ckpt = "./ckpt/thumos_i3d_reproduce"
+            ckpt = "./ckpt/thumos_i3d_CLIP_reproduce"
             config = "./configs/thumos_i3d_eval.yaml"
             epoch = -1
             topk = -1

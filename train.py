@@ -179,7 +179,7 @@ if __name__ == '__main__':
     except:
         class Args:
             def __init__(self):
-                self.config = './configs/thumos_i3d.yaml'
+                self.config = './configs/thumos_i3d_CLIP.yaml'
                 self.print_freq = 10
                 self.ckpt_freq = 5
                 self.output = 'reproduce'

@@ -87,6 +87,84 @@ class PtTransformerClsHead(nn.Module):
 
         # fpn_masks remains the same
         return out_logits
+    
+class PtTransformerActivationHead(nn.Module):
+    """
+    1D Conv heads for classification of activation
+    """
+    def __init__(
+        self,
+        input_dim,
+        feat_dim,
+        num_classes, # 1 for activation
+        prior_prob=0.01,
+        num_layers=3,
+        kernel_size=3,
+        act_layer=nn.ReLU,
+        with_ln=False,
+        empty_cls = []
+    ):
+        super().__init__()
+        self.act = act_layer()
+
+        # build the head
+        self.head = nn.ModuleList()
+        self.norm = nn.ModuleList()
+        for idx in range(num_layers-1):
+            if idx == 0:
+                in_dim = input_dim
+                out_dim = feat_dim
+            else:
+                in_dim = feat_dim
+                out_dim = feat_dim
+            self.head.append(
+                MaskedConv1D(
+                    in_dim, out_dim, kernel_size,
+                    stride=1,
+                    padding=kernel_size//2,
+                    bias=(not with_ln)
+                )
+            )
+            if with_ln:
+                self.norm.append(LayerNorm(out_dim))
+            else:
+                self.norm.append(nn.Identity())
+
+        # classifier
+        self.cls_head = MaskedConv1D(
+                feat_dim, num_classes, kernel_size,
+                stride=1, padding=kernel_size//2
+            )
+
+        # use prior in model initialization to improve stability
+        # this will overwrite other weight init
+        if prior_prob > 0:
+            bias_value = -(math.log((1 - prior_prob) / prior_prob))
+            torch.nn.init.constant_(self.cls_head.conv.bias, bias_value)
+
+        # a quick fix to empty categories:
+        # the weights assocaited with these categories will remain unchanged
+        # we set their bias to a large negative value to prevent their outputs
+        if len(empty_cls) > 0:
+            bias_value = -(math.log((1 - 1e-6) / 1e-6))
+            for idx in empty_cls:
+                torch.nn.init.constant_(self.cls_head.conv.bias[idx], bias_value)
+
+    def forward(self, fpn_feats, fpn_masks):
+        assert len(fpn_feats) == len(fpn_masks)
+
+        # apply the classifier for each pyramid level
+        out_logits = tuple()
+        for _, (cur_feat, cur_mask) in enumerate(zip(fpn_feats, fpn_masks)):
+            cur_out = cur_feat
+            for idx in range(len(self.head)):
+                cur_out, _ = self.head[idx](cur_out, cur_mask)
+                cur_out = self.act(self.norm[idx](cur_out))
+            cur_logits, _ = self.cls_head(cur_out, cur_mask)
+            out_logits += (cur_logits, )
+
+        # fpn_masks remains the same
+        return out_logits
 
 
 class PtTransformerRegHead(nn.Module):
@@ -312,6 +390,14 @@ class PtTransformer(nn.Module):
             num_layers=head_num_layers,
             empty_cls=train_cfg['head_empty_cls']
         )
+        self.act_head = PtTransformerActivationHead(
+            fpn_dim, head_dim, 1,
+            kernel_size=head_kernel_size,
+            prior_prob=self.train_cls_prior_prob,
+            with_ln=head_with_ln,
+            num_layers=head_num_layers,
+            empty_cls=train_cfg['head_empty_cls']
+        )
         self.reg_head = PtTransformerRegHead(
             fpn_dim, head_dim, len(self.fpn_strides),
             kernel_size=head_kernel_size,
@@ -346,12 +432,16 @@ class PtTransformer(nn.Module):
 
         # out_cls: List[B, #cls + 1, T_i]
         out_cls_logits = self.cls_head(fpn_feats, fpn_masks)
+        # out_cls: List[B, #cls + 1, T_i]
+        out_act_logits = self.cls_head(fpn_feats, fpn_masks) # this will output if the action shall be shown or not
         # out_offset: List[B, 2, T_i]
         out_offsets = self.reg_head(fpn_feats, fpn_masks)
 
         # permute the outputs
         # out_cls: F List[B, #cls, T_i] -> F List[B, T_i, #cls]
         out_cls_logits = [x.permute(0, 2, 1) for x in out_cls_logits]
+        # out_act: F List[B, #cls, T_i] -> F List[B, T_i, #cls]
+        out_act_logits = [x.permute(0, 2, 1) for x in out_act_logits]
         # out_offset: F List[B, 2 (xC), T_i] -> F List[B, T_i, 2 (xC)]
         out_offsets = [x.permute(0, 2, 1) for x in out_offsets]
         # fpn_masks: F list[B, 1, T_i] -> F List[B, T_i]
@@ -362,19 +452,22 @@ class PtTransformer(nn.Module):
             # generate segment/lable List[N x 2] / List[N] with length = B
             assert video_list[0]['segments'] is not None, "GT action labels does not exist"
             assert video_list[0]['labels'] is not None, "GT action labels does not exist"
+            assert video_list[0]['prompt'] is not None, "Prompts do not exist"
+            assert video_list[0]['active_label'] is not None, "GT action labels does not exist"
             gt_segments = [x['segments'].to(self.device) for x in video_list]
             gt_labels = [x['labels'].to(self.device) for x in video_list]
+            gt_activations = [x['active_label'] for x in video_list]
 
             # compute the gt labels for cls & reg
             # list of prediction targets
-            gt_cls_labels, gt_offsets = self.label_points(
-                points, gt_segments, gt_labels)
+            gt_cls_labels, gt_offsets, gt_activation_labels = self.label_points(
+                points, gt_segments, gt_labels, gt_activations)
 
             # compute the loss and return
             losses = self.losses(
                 fpn_masks,
                 out_cls_logits, out_offsets,
-                gt_cls_labels, gt_offsets
+                gt_cls_labels, gt_offsets, out_act_logits
             )
             return losses
 
@@ -427,26 +520,27 @@ class PtTransformer(nn.Module):
         return batched_inputs, batched_masks
 
     @torch.no_grad()
-    def label_points(self, points, gt_segments, gt_labels):
+    def label_points(self, points, gt_segments, gt_labels, gt_activations):
         # concat points on all fpn levels List[T x 4] -> F T x 4
         # This is shared for all samples in the mini-batch
         num_levels = len(points)
         concat_points = torch.cat(points, dim=0)
-        gt_cls, gt_offset = [], []
+        gt_cls, gt_offset, gt_act = [], [], []
 
         # loop over each video sample
-        for gt_segment, gt_label in zip(gt_segments, gt_labels):
-            cls_targets, reg_targets = self.label_points_single_video(
-                concat_points, gt_segment, gt_label
+        for gt_segment, gt_label, gt_activation in zip(gt_segments, gt_labels, gt_activations):
+            cls_targets, reg_targets, activation_targets = self.label_points_single_video(
+                concat_points, gt_segment, gt_label, gt_activation
             )
             # append to list (len = # images, each of size FT x C)
             gt_cls.append(cls_targets)
             gt_offset.append(reg_targets)
+            gt_act.append(activation_targets)
 
-        return gt_cls, gt_offset
+        return gt_cls, gt_offset, gt_act
 
     @torch.no_grad()
-    def label_points_single_video(self, concat_points, gt_segment, gt_label):
+    def label_points_single_video(self, concat_points, gt_segment, gt_label, gt_activation):
         # concat_points : F T x 4 (t, regression range, stride)
         # gt_segment : N (#Events) x 2
         # gt_label : N (#Events) x 1
@@ -517,24 +611,29 @@ class PtTransformer(nn.Module):
             (lens <= (min_len[:, None] + 1e-3)), (lens < float('inf'))
         ).to(reg_targets.dtype)
 
-        # cls_targets: F T x C; reg_targets F T x 2
+        # cls_targets: F T x C; reg_targets F T x 2; act_targets F T x 2
         gt_label_one_hot = F.one_hot(
             gt_label, self.num_classes
         ).to(reg_targets.dtype)
         cls_targets = min_len_mask @ gt_label_one_hot
         # to prevent multiple GT actions with the same label and boundaries
         cls_targets.clamp_(min=0.0, max=1.0)
+        
+        # Do the same thing to the activation as well
+        # act_targets: F T x C; reg_targets F T x 2
+        gt_act_one_hot = torch.zeros((cls_targets.shape[0], 1)).to(reg_targets.device)
+        gt_act_one_hot = cls_targets[:,gt_activation]
         # OK to use min_len_inds
         reg_targets = reg_targets[range(num_pts), min_len_inds]
         # normalization based on stride
         reg_targets /= concat_points[:, 3, None]
 
-        return cls_targets, reg_targets
+        return cls_targets, reg_targets, gt_act_one_hot
 
     def losses(
         self, fpn_masks,
         out_cls_logits, out_offsets,
-        gt_cls_labels, gt_offsets
+        gt_cls_labels, gt_offsets, out_act_logits
     ):
         # fpn_masks, out_*: F (List) [B, T_i, C]
         # gt_* : B (list) [F T, C]
