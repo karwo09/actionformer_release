@@ -673,6 +673,18 @@ class PtTransformer(nn.Module):
             reduction='sum'
         )
         cls_loss /= self.loss_normalizer
+        
+        # stack the list -> (B, FT) -> (# Valid, )
+        gt_activation_labels = torch.stack(gt_activation_labels)
+        
+        gt_activation_labels = gt_activation_labels[valid_mask]
+        # focal loss
+        act_loss = sigmoid_focal_loss(
+            torch.cat(out_act_logits, dim=1)[valid_mask],
+            gt_activation_labels.unsqueeze(-1),
+            reduction='sum'
+        )
+        act_loss /= self.loss_normalizer
 
         # 2. regression using IoU/GIoU loss (defined on positive samples)
         if num_pos == 0:
@@ -692,9 +704,10 @@ class PtTransformer(nn.Module):
             loss_weight = cls_loss.detach() / max(reg_loss.item(), 0.01)
 
         # return a dict of losses
-        final_loss = cls_loss + reg_loss * loss_weight
+        final_loss = cls_loss + reg_loss * loss_weight + act_loss
         return {'cls_loss'   : cls_loss,
                 'reg_loss'   : reg_loss,
+                'act_loss'   : act_loss,
                 'final_loss' : final_loss}
 
     @torch.no_grad()
