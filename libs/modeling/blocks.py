@@ -35,7 +35,7 @@ class MaskedConv1D(nn.Module):
         if bias:
             torch.nn.init.constant_(self.conv.bias, 0.)
 
-    def forward(self, x, mask):
+    def forward(self, x, mask=None):
         # x: batch size, feature channel, sequence length,
         # mask: batch size, 1, sequence length (bool)
         B, C, T = x.size()
@@ -45,16 +45,18 @@ class MaskedConv1D(nn.Module):
         # conv
         out_conv = self.conv(x)
         # compute the mask
-        if self.stride > 1:
+        if self.stride > 1 and mask is not None:
             # downsample the mask using nearest neighbor
             out_mask = F.interpolate(
                 mask.to(x.dtype), size=out_conv.size(-1), mode='nearest'
             )
-        else:
+        elif mask is not None:
             # masking out the features
             out_mask = mask.to(x.dtype)
 
         # masking the output, stop grad to mask
+        if mask is None:
+            return out_conv, torch.ones((B,1,T)).to(x.device)
         out_conv = out_conv * out_mask.detach()
         out_mask = out_mask.bool()
         return out_conv, out_mask
@@ -269,15 +271,16 @@ class MaskedMHCA(nn.Module):
         # mask: batch size, 1, sequence length (bool)
         B, C, T = x.size()
 
+        k = v = kv if kv is not None else x
+        mask_kv = None if kv is not None else mask
+        # step 1: depth convolutions
         # query conv -> (B, nh * hs, T')
-        q = x # x is always the query
-        k = v = x if kv is None else kv # kv is the key and value if provided to do cross attention else self attention
-        q, qx_mask = self.query_conv(q, mask)
+        q, qx_mask = self.query_conv(x, mask)
         q = self.query_norm(q)
         # key, value conv -> (B, nh * hs, T'')
-        k, kv_mask = self.key_conv(k, mask)
+        k, kv_mask = self.key_conv(k, mask_kv)
         k = self.key_norm(k)
-        v, _ = self.value_conv(v, mask)
+        v, _ = self.value_conv(v, mask_kv)
         v = self.value_norm(v)
 
         # projections
@@ -304,8 +307,11 @@ class MaskedMHCA(nn.Module):
         out = out.transpose(2, 3).contiguous().view(B, C, -1)
 
         # output projection + skip connection
-        out = self.proj_drop(self.proj(out)) * qx_mask.to(out.dtype)
-        return out, qx_mask
+        if qx_mask is not None:
+            out = self.proj_drop(self.proj(out)) * qx_mask.to(out.dtype)
+        else:
+            out = self.proj_drop(self.proj(out))
+        return out, torch.ones((out.shape[0],1,out.shape[2]), dtype=bool).to(x.device)
 
 
 class LocalMaskedMHCA(nn.Module):
@@ -572,19 +578,21 @@ class LocalMaskedMHCA(nn.Module):
         context = torch.einsum("bcwd,bcdh->bcwh", (chunked_attn_probs, chunked_value))
         return context.view(batch_size, num_heads, seq_len, head_dim)
 
-    def forward(self, x, mask):
+    def forward(self, x, mask, kv=None):
         # x: batch size, feature channel, sequence length,
         # mask: batch size, 1, sequence length (bool)
         B, C, T = x.size()
-
+        k = v = kv if kv is not None else x
+        maskq = mask if kv is None else None
+        mask = None if kv is not None else mask
         # step 1: depth convolutions
         # query conv -> (B, nh * hs, T')
-        q, qx_mask = self.query_conv(x, mask)
+        q, qx_mask = self.query_conv(x, maskq)
         q = self.query_norm(q)
         # key, value conv -> (B, nh * hs, T'')
-        k, kv_mask = self.key_conv(x, mask)
+        k, kv_mask = self.key_conv(v, mask)
         k = self.key_norm(k)
-        v, _ = self.value_conv(x, mask)
+        v, _ = self.value_conv(v, mask)
         v = self.value_norm(v)
 
         # step 2: query, key, value transforms & reshape
@@ -721,9 +729,13 @@ class TransformerBlock(nn.Module):
             self.drop_path_attn = nn.Identity()
             self.drop_path_mlp = nn.Identity()
 
-    def forward(self, x, mask, pos_embd=None):
+    def forward(self, x, mask, pos_embd=None, text=None):
         # pre-LN transformer: https://arxiv.org/pdf/2002.04745.pdf
-        out, out_mask = self.attn(self.ln1(x), mask)
+        if text is not None:
+            text = text.transpose(1, 2)
+            out, out_mask = self.attn(self.ln1(x), mask, text)
+        else:
+            out, out_mask = self.attn(self.ln1(x), mask)
         out_mask_float = out_mask.to(out.dtype)
         out = self.pool_skip(x) * out_mask_float + self.drop_path_attn(out)
         # FFN

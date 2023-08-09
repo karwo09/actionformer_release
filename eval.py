@@ -129,7 +129,7 @@ if __name__ == '__main__':
     except:
         class Args:
             ckpt = "./ckpt/thumos_i3d_CLIP_reproduce"
-            config = "./configs/thumos_i3d_eval.yaml"
+            config = "./configs/thumos_i3d_CLIP.yaml"
             epoch = -1
             topk = -1
             saveonly = False

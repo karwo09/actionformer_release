@@ -1,5 +1,4 @@
 import math
-
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -306,6 +305,7 @@ class PtTransformer(nn.Module):
         self.train_dropout = train_cfg['dropout']
         self.train_droppath = train_cfg['droppath']
         self.train_label_smoothing = train_cfg['label_smoothing']
+        self.use_text = train_cfg.get('use_text')
 
         # test time config
         self.test_pre_nms_thresh = test_cfg['pre_nms_thresh']
@@ -340,7 +340,8 @@ class PtTransformer(nn.Module):
                     'proj_pdrop' : self.train_dropout,
                     'path_pdrop' : self.train_droppath,
                     'use_abs_pe' : use_abs_pe,
-                    'use_rel_pe' : use_rel_pe
+                    'use_rel_pe' : use_rel_pe,
+                    'use_text' : self.use_text,
                 }
             )
         else:
@@ -421,7 +422,10 @@ class PtTransformer(nn.Module):
         batched_inputs, batched_masks = self.preprocessing(video_list)
 
         # forward the network (backbone -> neck -> heads)
-        feats, masks = self.backbone(batched_inputs, batched_masks)
+        if self.use_text:
+            feats, masks = self.backbone(batched_inputs, batched_masks, [video_list[i]['prompt'] for i in range(len(video_list))] )
+        else:
+            feats, masks = self.backbone(batched_inputs, batched_masks)
         fpn_feats, fpn_masks = self.neck(feats, masks)
 
         # compute the point coordinate along the FPN
@@ -433,7 +437,7 @@ class PtTransformer(nn.Module):
         # out_cls: List[B, #cls + 1, T_i]
         out_cls_logits = self.cls_head(fpn_feats, fpn_masks)
         # out_cls: List[B, #cls + 1, T_i]
-        out_act_logits = self.cls_head(fpn_feats, fpn_masks) # this will output if the action shall be shown or not
+        out_act_logits = self.act_head(fpn_feats, fpn_masks) # this will output if the action shall be shown or not
         # out_offset: List[B, 2, T_i]
         out_offsets = self.reg_head(fpn_feats, fpn_masks)
 
@@ -467,7 +471,7 @@ class PtTransformer(nn.Module):
             losses = self.losses(
                 fpn_masks,
                 out_cls_logits, out_offsets,
-                gt_cls_labels, gt_offsets, out_act_logits
+                gt_cls_labels, gt_offsets, out_act_logits, gt_activation_labels
             )
             return losses
 
@@ -633,7 +637,7 @@ class PtTransformer(nn.Module):
     def losses(
         self, fpn_masks,
         out_cls_logits, out_offsets,
-        gt_cls_labels, gt_offsets, out_act_logits
+        gt_cls_labels, gt_offsets, out_act_logits, gt_activation_labels
     ):
         # fpn_masks, out_*: F (List) [B, T_i, C]
         # gt_* : B (list) [F T, C]

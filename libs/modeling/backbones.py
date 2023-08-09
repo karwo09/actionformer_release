@@ -1,10 +1,72 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
+# import clip model
+import transformers
+from transformers import AutoTokenizer, CLIPTextModel
+
+
+
 
 from .models import register_backbone
 from .blocks import (get_sinusoid_encoding, TransformerBlock, MaskedConv1D,
                      ConvBlock, LayerNorm)
+
+
+class TextEncoder(nn.Module):
+    def __init__(self, model_name: str, trainable: bool = True) -> None:
+        super().__init__()
+
+
+        self.model = transformers.CLIPTextModel.from_pretrained(model_name)
+        self.text_tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+
+        for param in self.model.parameters():
+            param.requires_grad = trainable
+
+
+        self.target_token_idx = 0
+
+
+    def forward(self, input_text):
+        input_ids = self.text_tokenizer(input_text, padding=True, return_tensors="pt").to("cuda" if torch.cuda.is_available() else "cpu")
+
+        # outputs = self.text_tokenizermodel(**inputs)
+        # last_hidden_state = outputs.last_hidden_state # output.last_hidden_state.shape is [2,7,512]
+        # pooled_output = outputs.pooler_output  # pooled (EOS token) states
+        output = self.model(**input_ids)
+        last_hidden_state = output.last_hidden_state
+
+
+        return last_hidden_state
+    
+class ProjectionHead(nn.Module):
+    # Projection head for CLIP
+    def __init__(self, embedding_dim: int, projection_dim: int, dropout: float) -> None:
+        super().__init__()
+
+
+        self.projection = nn.Linear(embedding_dim, projection_dim)
+        self.gelu = nn.GELU()
+        self.fc = nn.Linear(projection_dim, projection_dim)
+
+
+        self.dropout = nn.Dropout(dropout)
+        self.layer_norm = nn.LayerNorm(projection_dim)
+
+
+    def forward(self, x):
+        projected = self.projection(x)
+        x = self.gelu(projected)
+        x = self.fc(x)
+        x = self.dropout(x)
+
+
+        x += projected
+
+
+        return self.layer_norm(x)
 
 
 @register_backbone("convTransformer")
@@ -28,6 +90,7 @@ class ConvTransformerBackbone(nn.Module):
         path_pdrop = 0.0,      # droput rate for drop path
         use_abs_pe = False,    # use absolute position embedding
         use_rel_pe = False,    # use relative position embedding
+        use_text = False,      # use text embedding
     ):
         super().__init__()
         assert len(arch) == 3
@@ -40,6 +103,11 @@ class ConvTransformerBackbone(nn.Module):
         self.scale_factor = scale_factor
         self.use_abs_pe = use_abs_pe
         self.use_rel_pe = use_rel_pe
+        self.use_text = use_text
+        
+        if use_text:
+            self.text_encoder = TextEncoder("openai/clip-vit-base-patch32", trainable=False)
+            self.text_embedder = ProjectionHead(512, 512, 0.1)
 
         # feature projection
         self.n_in = n_in
@@ -112,9 +180,18 @@ class ConvTransformerBackbone(nn.Module):
             if module.bias is not None:
                 torch.nn.init.constant_(module.bias, 0.)
 
-    def forward(self, x, mask):
+    def forward(self, x, mask, text):
         # x: batch size, feature channel, sequence length,
         # mask: batch size, 1, sequence length (bool)
+        if self.use_text and text is None:
+            # Throw an error if we're using text but don't have any
+            raise ValueError("text is None but use_text is True")
+        if self.use_text:
+            #print("text", len(text))
+            # get the text embedding for this layer
+            text_enc = self.text_encoder(text)
+            text_embed = self.text_embedder(text_enc)
+            
         B, C, T = x.size()
 
         # feature projection
@@ -149,7 +226,10 @@ class ConvTransformerBackbone(nn.Module):
 
         # stem transformer
         for idx in range(len(self.stem)):
-            x, mask = self.stem[idx](x, mask)
+            if self.use_text:
+                x, mask = self.stem[idx](x, mask, text=text_embed)
+            else:
+                x, mask = self.stem[idx](x, mask)
 
         # prep for outputs
         out_feats = (x, )
