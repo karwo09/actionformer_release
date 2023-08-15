@@ -183,6 +183,7 @@ if __name__ == '__main__':
                 self.print_freq = 10
                 self.ckpt_freq = 5
                 self.output = 'reproduce'
-                self.resume = ''
+                # self.resume = '/home/karolwojtulewicz/code/actionformer_release/ckpt/thumos_i3d_CLIP_reproduce/epoch_095.pth.tar'
+                self.resume = '/home/karolwojtulewicz/code/actionformer_release/ckpt/thumos_i3d_CLIP_reproduce/epoch_040.pth.tar'
         args = Args()
     main(args)

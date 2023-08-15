@@ -1,4 +1,5 @@
 import os
+import random
 import json
 import numpy as np
 
@@ -134,10 +135,9 @@ class THUMOS14CLIPDataset(Dataset):
                          'duration' : duration,
                          'segments' : segments,
                          'labels' : labels,
-                         'prompt' : "A person doing " + active_label + ".",
                          'active_label' : label_dict[active_label]
             }, )
-
+        self.label_dict = label_dict
         return dict_db, label_dict
 
     def __len__(self):
@@ -171,16 +171,20 @@ class THUMOS14CLIPDataset(Dataset):
             
         else:
             segments, labels = None, None
-
+        rand = random.randint(0,(len(video_item['labels'])-1))
+        activity = str([i for i in self.label_dict if self.label_dict[i]==video_item['labels'][int(rand)]][0])
+        if activity is None:
+            activity = 'Number ' +str(video_item['labels'][int(rand)])
         # return a data dict
         data_dict = {'video_id'        : video_item['id'],
                      'feats'           : feats,      # C x T
                      'segments'        : segments,   # N x 2
                      'labels'          : labels,     # N
                      'fps'             : video_item['fps'],
+                     'prompt'          : activity,
+                    #  'prompt'          : "A person doing " + activity + ".",
                      'duration'        : video_item['duration'],
-                     'prompt'          : video_item['prompt'],
-                     'active_label'    : video_item['active_label'],
+                     'active_label'    : video_item['labels'][int(rand)],
                      'feat_stride'     : feat_stride,
                      'feat_num_frames' : self.num_frames}
 

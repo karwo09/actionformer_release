@@ -106,7 +106,7 @@ class ConvTransformerBackbone(nn.Module):
         self.use_text = use_text
         
         if use_text:
-            self.text_encoder = TextEncoder("openai/clip-vit-base-patch32", trainable=False)
+            self.text_encoder = TextEncoder("openai/clip-vit-base-patch32", trainable=True)
             self.text_embedder = ProjectionHead(512, 512, 0.1)
 
         # feature projection
@@ -180,17 +180,22 @@ class ConvTransformerBackbone(nn.Module):
             if module.bias is not None:
                 torch.nn.init.constant_(module.bias, 0.)
 
-    def forward(self, x, mask, text):
+    def forward(self, x, mask, text, cross_attn=False):
         # x: batch size, feature channel, sequence length,
         # mask: batch size, 1, sequence length (bool)
         if self.use_text and text is None:
             # Throw an error if we're using text but don't have any
             raise ValueError("text is None but use_text is True")
+        
         if self.use_text:
             #print("text", len(text))
-            # get the text embedding for this layer
-            text_enc = self.text_encoder(text)
-            text_embed = self.text_embedder(text_enc)
+            # randomly turn on/off the text embedding
+            if(cross_attn):
+                # get the text embedding for this layer
+                text_enc = self.text_encoder(text) # get token embeddings
+                text_embed = self.text_embedder(text_enc) # get projection head embeddings from the CLIP model  
+            else:
+                text_embed = x
             
         B, C, T = x.size()
 
@@ -227,7 +232,7 @@ class ConvTransformerBackbone(nn.Module):
         # stem transformer
         for idx in range(len(self.stem)):
             if self.use_text:
-                x, mask = self.stem[idx](x, mask, text=text_embed)
+                x, mask = self.stem[idx](x, mask, text=text_embed, cross_attn=cross_attn)
             else:
                 x, mask = self.stem[idx](x, mask)
 

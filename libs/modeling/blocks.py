@@ -729,9 +729,9 @@ class TransformerBlock(nn.Module):
             self.drop_path_attn = nn.Identity()
             self.drop_path_mlp = nn.Identity()
 
-    def forward(self, x, mask, pos_embd=None, text=None):
+    def forward(self, x, mask, pos_embd=None, text=None,cross_attn=False):
         # pre-LN transformer: https://arxiv.org/pdf/2002.04745.pdf
-        if text is not None:
+        if text is not None and cross_attn:
             text = text.transpose(1, 2)
             out, out_mask = self.attn(self.ln1(x), mask, text)
         else:

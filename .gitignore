@@ -11,6 +11,7 @@ libs/utils/nms_1d_cpu.egg-info
 __pycache__/
 *.py[cod]
 *$py.class
+*.png
 
 # C extensions
 *.so
