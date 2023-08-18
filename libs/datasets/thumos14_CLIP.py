@@ -1,4 +1,5 @@
 import os
+import librosa
 import random
 import json
 import numpy as np
@@ -58,6 +59,11 @@ class THUMOS14CLIPDataset(Dataset):
         self.num_classes = num_classes
         self.label_dict = None
         self.crop_ratio = crop_ratio
+        
+        # audio
+        self.SAMPLE_RATE = 16000 # 16kHz as per https://arxiv.org/abs/2106.14118
+        self.SAMPLE_RATE = 2000 # 4kHz 
+        self.audio_extention = '.wav'
 
         # load database and select the subset
         dict_db, label_dict = self._load_json_db(self.json_file)
@@ -153,6 +159,11 @@ class THUMOS14CLIPDataset(Dataset):
         filename = os.path.join(self.feat_folder,
                                 self.file_prefix + video_item['id'] + self.file_ext)
         feats = np.load(filename).astype(np.float32)
+        
+        # load audio
+        audio_filename = os.path.join(self.feat_folder,
+                                self.file_prefix + video_item['id'] + self.audio_extention)
+        track, _ = librosa.load(audio_filename, sr=self.SAMPLE_RATE, dtype=np.float32)
 
         # deal with downsampling (= increased feat stride)
         feats = feats[::self.downsample_rate, :]
@@ -183,6 +194,7 @@ class THUMOS14CLIPDataset(Dataset):
                      'fps'             : video_item['fps'],
                      'prompt'          : activity,
                     #  'prompt'          : "A person doing " + activity + ".",
+                     'audio_track'     : track,
                      'duration'        : video_item['duration'],
                      'active_label'    : video_item['labels'][int(rand)],
                      'feat_stride'     : feat_stride,

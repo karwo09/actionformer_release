@@ -307,6 +307,9 @@ class PtTransformer(nn.Module):
         self.train_droppath = train_cfg['droppath']
         self.train_label_smoothing = train_cfg['label_smoothing']
         self.use_text = train_cfg.get('use_text')
+        self.use_audio = train_cfg.get('use_audio')
+        if self.use_text and self.use_audio:
+            raise NotImplementedError("Text and audio cannot be used together") 
         self.sigmoid = nn.Sigmoid()
 
         # test time config
@@ -344,6 +347,7 @@ class PtTransformer(nn.Module):
                     'use_abs_pe' : use_abs_pe,
                     'use_rel_pe' : use_rel_pe,
                     'use_text' : self.use_text,
+                    'use_audio' : self.use_audio,
                 }
             )
         else:
@@ -393,14 +397,14 @@ class PtTransformer(nn.Module):
             num_layers=head_num_layers,
             empty_cls=train_cfg['head_empty_cls']
         )
-        self.act_head = PtTransformerActivationHead(
-            fpn_dim, head_dim, 1,
-            kernel_size=head_kernel_size,
-            prior_prob=self.train_cls_prior_prob,
-            with_ln=head_with_ln,
-            num_layers=head_num_layers,
-            empty_cls=train_cfg['head_empty_cls']
-        )
+        # self.act_head = PtTransformerActivationHead(
+        #     fpn_dim, head_dim, 1,
+        #     kernel_size=head_kernel_size,
+        #     prior_prob=self.train_cls_prior_prob,
+        #     with_ln=head_with_ln,
+        #     num_layers=head_num_layers,
+        #     empty_cls=train_cfg['head_empty_cls']
+        # )
         self.reg_head = PtTransformerRegHead(
             fpn_dim, head_dim, len(self.fpn_strides),
             kernel_size=head_kernel_size,
@@ -444,6 +448,8 @@ class PtTransformer(nn.Module):
         # forward the network (backbone -> neck -> heads)
         if self.use_text:
             feats, masks = self.backbone(batched_inputs, batched_masks, [video_list[i]['prompt'] for i in range(len(video_list))], cross_attn=cross_attn)
+        if self.use_audio:
+            feats, masks = self.backbone(batched_inputs, batched_masks, [video_list[i]['audio_track'] for i in range(len(video_list))], cross_attn=cross_attn)
         else:
             feats, masks = self.backbone(batched_inputs, batched_masks)
         fpn_feats, fpn_masks = self.neck(feats, masks)
@@ -457,7 +463,7 @@ class PtTransformer(nn.Module):
         # out_cls: List[B, #cls + 1, T_i]
         out_cls_logits = self.cls_head(fpn_feats, fpn_masks)
         # out_cls: List[B, #cls + 1, T_i]
-        out_act_logits = self.act_head(fpn_feats, fpn_masks) # this will output if the action shall be shown or not
+        # out_act_logits = self.act_head(fpn_feats, fpn_masks) # this will output if the action shall be shown or not
         # out_offset: List[B, 2, T_i]
         out_offsets = self.reg_head(fpn_feats, fpn_masks)
 
@@ -465,7 +471,7 @@ class PtTransformer(nn.Module):
         # out_cls: F List[B, #cls, T_i] -> F List[B, T_i, #cls]
         out_cls_logits = [x.permute(0, 2, 1) for x in out_cls_logits]
         # out_act: F List[B, #cls, T_i] -> F List[B, T_i, #cls]
-        out_act_logits = [x.permute(0, 2, 1) for x in out_act_logits]
+        # out_act_logits = [x.permute(0, 2, 1) for x in out_act_logits]
         # out_offset: F List[B, 2 (xC), T_i] -> F List[B, T_i, 2 (xC)]
         out_offsets = [x.permute(0, 2, 1) for x in out_offsets]
         # fpn_masks: F list[B, 1, T_i] -> F List[B, T_i]
@@ -476,7 +482,7 @@ class PtTransformer(nn.Module):
         assert video_list[0]['segments'] is not None, "GT action labels does not exist"
         assert video_list[0]['labels'] is not None, "GT action labels does not exist"
         assert video_list[0]['prompt'] is not None, "Prompts do not exist"
-        assert video_list[0]['active_label'] is not None, "GT action labels does not exist"
+        # assert video_list[0]['active_label'] is not None, "GT action labels does not exist"
         gt_segments = [x['segments'].to(self.device) for x in video_list]
         gt_labels = [x['labels'].to(self.device) for x in video_list]
         gt_activations = [x['active_label'] for x in video_list]
@@ -491,33 +497,33 @@ class PtTransformer(nn.Module):
             losses = self.losses(
                 fpn_masks,
                 out_cls_logits, out_offsets,
-                gt_cls_labels, gt_offsets, out_act_logits, gt_activation_labels, cross_attn
+                gt_cls_labels, gt_offsets
             )
             return losses
 
         else:
-            gt_cls_labels = torch.argmax(gt_cls_labels[0], dim=1)
-            gt_cls_labels = gt_cls_labels.unflatten(0, (self.find_unflatten_H_W(gt_cls_labels))).to("cpu").numpy()
-            gt_cls_labels = gt_cls_labels - gt_cls_labels.min()
-            gt_cls_labels = gt_cls_labels / gt_cls_labels.max()
-            gt_cls_labels[gt_cls_labels > 1] = 1
-            gt_activation_labels = gt_activation_labels[0].unflatten(0, (self.find_unflatten_H_W(gt_activation_labels[0]))).to("cpu").numpy()
-            out_act_logits = torch.cat(out_act_logits, dim=1).to("cpu").squeeze(0).squeeze(-1)
-            out_act_logits = nn.Softmax(dim=0)(out_act_logits).unflatten(0, (self.find_unflatten_H_W(out_act_logits))).numpy()
-            import matplotlib.pyplot as plt
-            fig, ax = plt.subplots(nrows=1, ncols=3)
-            out_act_logits = out_act_logits - out_act_logits.min()
-            out_act_logits  = out_act_logits / out_act_logits.max()
-            out_act_logits[out_act_logits > 0.05] = 1
-            out_act_logits[out_act_logits <= 0.05] = 0
-            # out_act_logits = out_act_logits.unflatten(1, (72, 63))
-            out_act_logits = out_act_logits
-            plt.imshow(out_act_logits)
-            ax[0].imshow(out_act_logits)
-            ax[1].imshow(gt_activation_labels)
-            ax[2].imshow(gt_cls_labels)
-            plt.savefig('./test{}.png'.format(self.fig_counter))
-            self.fig_counter += 1
+            # gt_cls_labels = torch.argmax(gt_cls_labels[0], dim=1)
+            # gt_cls_labels = gt_cls_labels.unflatten(0, (self.find_unflatten_H_W(gt_cls_labels))).to("cpu").numpy()
+            # gt_cls_labels = gt_cls_labels - gt_cls_labels.min()
+            # gt_cls_labels = gt_cls_labels / gt_cls_labels.max()
+            # gt_cls_labels[gt_cls_labels > 1] = 1
+            # gt_activation_labels = gt_activation_labels[0].unflatten(0, (self.find_unflatten_H_W(gt_activation_labels[0]))).to("cpu").numpy()
+            # out_act_logits = torch.cat(out_act_logits, dim=1).to("cpu").squeeze(0).squeeze(-1)
+            # out_act_logits = nn.Softmax(dim=0)(out_act_logits).unflatten(0, (self.find_unflatten_H_W(out_act_logits))).numpy()
+            # import matplotlib.pyplot as plt
+            # fig, ax = plt.subplots(nrows=1, ncols=3)
+            # out_act_logits = out_act_logits - out_act_logits.min()
+            # out_act_logits  = out_act_logits / out_act_logits.max()
+            # out_act_logits[out_act_logits > 0.05] = 1
+            # out_act_logits[out_act_logits <= 0.05] = 0
+            # # out_act_logits = out_act_logits.unflatten(1, (72, 63))
+            # out_act_logits = out_act_logits
+            # plt.imshow(out_act_logits)
+            # ax[0].imshow(out_act_logits)
+            # ax[1].imshow(gt_activation_labels)
+            # ax[2].imshow(gt_cls_labels)
+            # # plt.savefig('./test{}.png'.format(self.fig_counter))
+            # self.fig_counter += 1
             
             # decode the actions (sigmoid / stride, etc)
             results = self.inference(
@@ -534,6 +540,10 @@ class PtTransformer(nn.Module):
         feats = [x['feats'] for x in video_list]
         feats_lens = torch.as_tensor([feat.shape[-1] for feat in feats])
         max_len = feats_lens.max(0).values.item()
+        if self.use_audio:
+            audio_tracks = [x['audio_track'] for x in video_list]
+            audio_lens = torch.as_tensor([audio_track.shape[-1] for audio_track in audio_tracks])
+            max_audio_len = audio_lens.max(0).values.item()
 
         if self.training:
             assert max_len <= self.max_seq_len, "Input length must be smaller than max_seq_len during training"
@@ -680,7 +690,7 @@ class PtTransformer(nn.Module):
     def losses(
         self, fpn_masks,
         out_cls_logits, out_offsets,
-        gt_cls_labels, gt_offsets, out_act_logits, gt_activation_labels, cross_attn
+        gt_cls_labels, gt_offsets
     ):
         # fpn_masks, out_*: F (List) [B, T_i, C]
         # gt_* : B (list) [F T, C]
@@ -716,33 +726,33 @@ class PtTransformer(nn.Module):
             reduction='sum'
         )
         cls_loss /= self.loss_normalizer
-        # 2. regression using IoU/GIoU loss (defined on positive samples)
-        if num_pos == 0:
-            act_loss = 0 * pred_offsets.sum()
-        else:
-            # stack the list -> (B, FT) -> (# Valid, )
-            gt_activation_labels = torch.stack(gt_activation_labels, dim=1).transpose(0,1)
+        # 2. Conditional activation loss
+        # if num_pos == 0:
+        #     act_loss = 0 * pred_offsets.sum()
+        # else:
+        #     # stack the list -> (B, FT) -> (# Valid, )
+        #     gt_activation_labels = torch.stack(gt_activation_labels, dim=1).transpose(0,1)
             
-            if not cross_attn:
-                gt_activation_labels = gt_cls
-                # gt_activation_labels = gt_activation_labels[:,:, gt_activation_labels>1] 
-                gt_activation_labels = torch.argmax(gt_activation_labels, dim=-1)
-                gt_activation_labels[gt_activation_labels>1] = 1
-            gt_activation_labels = gt_activation_labels[valid_mask]
-            out_act_logits = torch.cat(out_act_logits, dim=1)[valid_mask]
-            # out_act_logits = self.sigmoid(out_act_logits)[valid_mask]
+        #     if not cross_attn:
+        #         gt_activation_labels = gt_cls
+        #         # gt_activation_labels = gt_activation_labels[:,:, gt_activation_labels>1] 
+        #         gt_activation_labels = torch.argmax(gt_activation_labels, dim=-1)
+        #         gt_activation_labels[gt_activation_labels>1] = 1
+        #     gt_activation_labels = gt_activation_labels[valid_mask]
+        #     out_act_logits = torch.cat(out_act_logits, dim=1)[valid_mask]
+        #     # out_act_logits = self.sigmoid(out_act_logits)[valid_mask]
             
-            # ones = torch.ones_like(out_act_logits)
-            # ones[out_act_logits < 0] = 0
-            # out_act_logits = ones
+        #     # ones = torch.ones_like(out_act_logits)
+        #     # ones[out_act_logits < 0] = 0
+        #     # out_act_logits = ones
             
-            # focal loss
-            act_loss = sigmoid_focal_loss(
-                out_act_logits,
-                gt_activation_labels.unsqueeze(-1),
-                reduction='sum'
-            )
-            act_loss /= self.loss_normalizer
+        #     # focal loss
+        #     act_loss = sigmoid_focal_loss(
+        #         out_act_logits,
+        #         gt_activation_labels.unsqueeze(-1),
+        #         reduction='sum'
+        #     )
+        #     act_loss /= self.loss_normalizer
 
         # 2. regression using IoU/GIoU loss (defined on positive samples)
         if num_pos == 0:
@@ -762,10 +772,11 @@ class PtTransformer(nn.Module):
             loss_weight = cls_loss.detach() / max(reg_loss.item(), 0.01)
 
         # return a dict of losses
-        final_loss = cls_loss + reg_loss * loss_weight + act_loss
+        # final_loss = cls_loss + reg_loss * loss_weight + act_loss
+        final_loss = cls_loss + reg_loss * loss_weight
         return {'cls_loss'   : cls_loss,
                 'reg_loss'   : reg_loss,
-                'act_loss'   : act_loss,
+                # 'act_loss'   : act_loss,
                 'final_loss' : final_loss}
 
     @torch.no_grad()

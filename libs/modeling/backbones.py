@@ -12,6 +12,11 @@ from .models import register_backbone
 from .blocks import (get_sinusoid_encoding, TransformerBlock, MaskedConv1D,
                      ConvBlock, LayerNorm)
 
+import os
+import sys
+
+sys.path.append(os.path.dirname(os.path.abspath(f'{os.getcwd()}/AudioCLIP/audioclip')))
+
 
 class TextEncoder(nn.Module):
     def __init__(self, model_name: str, trainable: bool = True) -> None:
@@ -91,6 +96,7 @@ class ConvTransformerBackbone(nn.Module):
         use_abs_pe = False,    # use absolute position embedding
         use_rel_pe = False,    # use relative position embedding
         use_text = False,      # use text embedding
+        use_audio = False,      # use audio embedding
     ):
         super().__init__()
         assert len(arch) == 3
@@ -104,10 +110,21 @@ class ConvTransformerBackbone(nn.Module):
         self.use_abs_pe = use_abs_pe
         self.use_rel_pe = use_rel_pe
         self.use_text = use_text
+        self.use_audio = use_audio
         
         if use_text:
             self.text_encoder = TextEncoder("openai/clip-vit-base-patch32", trainable=True)
             self.text_embedder = ProjectionHead(512, 512, 0.1)
+        
+        if use_audio:
+            print("Loading AudioCLIP")
+            from AudioCLIP.audioclip.model import AudioCLIP
+            from AudioCLIP.audioclip.utils.transforms import ToTensor1D
+            AUDIOCLIP_PATH = "/home/karolwojtulewicz/code/actionformer_release/pretrained/AudioCLIP/AudioCLIP-Full-Training.pt"
+            aclp = AudioCLIP(pretrained=AUDIOCLIP_PATH)
+            self.audio_transforms = ToTensor1D()
+            self.audio_encoder = aclp
+            self.audio_embedder = ProjectionHead(2048, 512, 0.1)
 
         # feature projection
         self.n_in = n_in
@@ -180,22 +197,32 @@ class ConvTransformerBackbone(nn.Module):
             if module.bias is not None:
                 torch.nn.init.constant_(module.bias, 0.)
 
-    def forward(self, x, mask, text, cross_attn=False):
+    def forward(self, x, mask, kv, cross_attn=False):
         # x: batch size, feature channel, sequence length,
         # mask: batch size, 1, sequence length (bool)
-        if self.use_text and text is None:
+        if (self.use_text or self.use_audio) and kv is None:
             # Throw an error if we're using text but don't have any
             raise ValueError("text is None but use_text is True")
         
-        if self.use_text:
+        if cross_attn:
             #print("text", len(text))
             # randomly turn on/off the text embedding
-            if(cross_attn):
+            if(self.use_text):
                 # get the text embedding for this layer
-                text_enc = self.text_encoder(text) # get token embeddings
-                text_embed = self.text_embedder(text_enc) # get projection head embeddings from the CLIP model  
+                text_enc = self.text_encoder(kv) # get token embeddings
+                kv_embed = self.text_embedder(text_enc) # get projection head embeddings from the CLIP model  
+            elif(self.use_audio):
+                # get the audio embedding for this layer
+                if(len(kv) == 1):
+                    kv = torch.from_numpy(kv[0]).unsqueeze(0)
+                else:
+                    # pad with torch.nn.utils.rnn.pad_sequence
+                    kv = torch.nn.utils.rnn.pad_sequence([torch.tensor(part) for part in kv], batch_first=True)
+                # audio_enc = self.audio_transforms(kv)
+                ((audio_enc, _, _), _), _ = self.audio_encoder(kv, only_embedding=True, flatten=True) # get token embeddings, wierd tuple unpacking, but this is how it works...
+                kv_embed = self.audio_embedder(audio_enc.permute(0, -1, -2)) 
             else:
-                text_embed = x
+                kv_embed = x
             
         B, C, T = x.size()
 
@@ -232,7 +259,7 @@ class ConvTransformerBackbone(nn.Module):
         # stem transformer
         for idx in range(len(self.stem)):
             if self.use_text:
-                x, mask = self.stem[idx](x, mask, text=text_embed, cross_attn=cross_attn)
+                x, mask = self.stem[idx](x, mask, text=kv_embed, cross_attn=cross_attn)
             else:
                 x, mask = self.stem[idx](x, mask)
 
