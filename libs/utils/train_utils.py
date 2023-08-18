@@ -388,7 +388,7 @@ def valid_one_epoch(
     for iter_idx, video_list in enumerate(val_loader, 0):
         # forward the model (wo. grad)
         with torch.no_grad():
-            print("Prompt: " + video_list[0]["prompt"])
+            # print("Prompt: " + video_list[0]["prompt"])
             output = model(video_list)
 
             # unpack the results into ANet format

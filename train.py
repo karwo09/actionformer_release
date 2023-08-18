@@ -48,7 +48,11 @@ def main(args):
     if not os.path.exists(ckpt_folder):
         os.mkdir(ckpt_folder)
     # tensorboard writer
-    tb_writer = SummaryWriter(os.path.join(ckpt_folder, 'logs'))
+    tb_writer = None
+    if not args.debug:
+        tb_writer = SummaryWriter(os.path.join(ckpt_folder, 'logs/{}'.format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))))
+        
+    
 
     # fix the random seeds (this will fix everything)
     rng_generator = fix_random_seed(cfg['init_rand_seed'], include_cuda=True)
@@ -154,7 +158,8 @@ def main(args):
             )
 
     # wrap up
-    tb_writer.close()
+    if tb_writer is not None:
+        tb_writer.close()
     print("All done!")
     return
 
@@ -175,15 +180,17 @@ if __name__ == '__main__':
                             help='name of exp folder (default: none)')
         parser.add_argument('--resume', default='', type=str, metavar='PATH',
                             help='path to a checkpoint (default: none)')
+        parser.add_argument('--debug', default=False, type=bool, help='path to a checkpoint (default: none)')
         args = parser.parse_args()
     except:
         class Args:
             def __init__(self):
                 self.config = './configs/thumos_i3d_CLIP.yaml'
-                self.print_freq = 10
+                self.print_freq =5
                 self.ckpt_freq = 5
                 self.output = 'reproduce'
-                # self.resume = '/home/karolwojtulewicz/code/actionformer_release/ckpt/thumos_i3d_CLIP_reproduce/epoch_095.pth.tar'
+                self.debug = False
+                # self.resume = '/home/karolwojtulewicz/code/actionformer_release/ckpt/thumos_i3d_CLIP_reproduce/_epoch_040.pth.tar'
                 self.resume = ''
         args = Args()
     main(args)

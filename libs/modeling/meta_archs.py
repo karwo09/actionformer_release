@@ -9,6 +9,43 @@ from .losses import ctr_diou_loss_1d, sigmoid_focal_loss
 
 from ..utils import batched_nms
 
+class ProjectionHeadAudio(nn.Module):
+    # Projection head for CLIP
+    def __init__(self, embedding_dim: int, projection_dim: int, dropout: float) -> None:
+        super().__init__()
+        
+        # self.maxpool = nn.MaxPool1d(4, stride=4)
+        self.conv1 = nn.Conv1d(embedding_dim, embedding_dim-1 , 3, padding=1)
+        
+        self.transormer_encoder = nn.TransformerEncoderLayer(d_model=1024, nhead=8)
+
+
+        self.projection = nn.Linear(embedding_dim-1, projection_dim)
+        self.gelu = nn.GELU()
+        self.fc = nn.Linear(projection_dim, projection_dim)
+
+        self.dropout = nn.Dropout(dropout)
+        self.layer_norm = nn.LayerNorm(projection_dim)
+
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = F.gelu(x)
+        x = x.transpose(1, 2)
+        x = self.transormer_encoder(x)
+        # x = x.transpose(1, 2)
+        x = F.gelu(x)
+        projected = self.projection(x)
+        x = self.gelu(projected)
+        x = self.fc(x)
+        x = self.dropout(x)
+        x = F.gelu(x)
+
+        x += projected
+
+
+        return self.layer_norm(x)
+
 class PtTransformerClsHead(nn.Module):
     """
     1D Conv heads for classification
@@ -416,6 +453,16 @@ class PtTransformer(nn.Module):
         # useful for small mini-batch training
         self.loss_normalizer = train_cfg['init_loss_norm']
         self.loss_normalizer_momentum = 0.9
+        
+        if self.use_audio:
+            print("Loading AudioCLIP")
+            from AudioCLIP.audioclip.model import AudioCLIP
+            from AudioCLIP.audioclip.utils.transforms import ToTensor1D
+            AUDIOCLIP_PATH = "/home/karolwojtulewicz/code/actionformer_release/pretrained/AudioCLIP/AudioCLIP-Partial-Training.pt"
+            aclp = AudioCLIP(pretrained=AUDIOCLIP_PATH)
+            self.audio_transforms = ToTensor1D()
+            self.audio_encoder = aclp.audio.spectrogram
+            self.audio_embedder = ProjectionHeadAudio(1025, 512, 0.1)
 
     @property
     def device(self):
@@ -443,15 +490,16 @@ class PtTransformer(nn.Module):
         cross_attn = True
         # cross_attn = True if torch.rand(1) > 0.5 else False
         # batch the video list into feats (B, C, T) and masks (B, 1, T)
-        batched_inputs, batched_masks = self.preprocessing(video_list)
+        batched_video_inputs, batched_audio_inputs, batched_masks = self.preprocessing(video_list)
 
         # forward the network (backbone -> neck -> heads)
         if self.use_text:
-            feats, masks = self.backbone(batched_inputs, batched_masks, [video_list[i]['prompt'] for i in range(len(video_list))], cross_attn=cross_attn)
+            feats, masks = self.backbone(batched_video_inputs, batched_masks, [video_list[i]['prompt'] for i in range(len(video_list))], cross_attn=cross_attn)
         if self.use_audio:
-            feats, masks = self.backbone(batched_inputs, batched_masks, [video_list[i]['audio_track'] for i in range(len(video_list))], cross_attn=cross_attn)
+            
+            feats, masks = self.backbone(batched_video_inputs, batched_masks, batched_audio_inputs, cross_attn=cross_attn)
         else:
-            feats, masks = self.backbone(batched_inputs, batched_masks)
+            feats, masks = self.backbone(batched_video_inputs, batched_masks)
         fpn_feats, fpn_masks = self.neck(feats, masks)
 
         # compute the point coordinate along the FPN
@@ -531,50 +579,102 @@ class PtTransformer(nn.Module):
                 out_cls_logits, out_offsets
             )
             return results
+    
+    def process_raw_audio(self, video_list):
+        kv = [video_list[i]['audio_track'] for i in range(len(video_list))]
+            # get the audio embedding for this layer
+        if(len(kv) == 1):
+            kv = torch.from_numpy(kv[0]).unsqueeze(0)
+        else:
+            # pad with torch.nn.utils.rnn.pad_sequence
+            kv = torch.nn.utils.rnn.pad_sequence([torch.tensor(part) for part in kv], batch_first=True)
+        # audio_enc = self.audio_transforms(kv)
+        # ((audio_enc, _, _), _), _ = self.audio_encoder(kv, only_embedding=True, flatten=True) # get token embeddings, wierd tuple unpacking, but this is how it works...
+        audio_enc = self.audio_encoder(kv.reshape(1, 1, -1)).squeeze().to(self.device) # get token embeddings, wierd tuple unpacking, but this is how it works...
+        # import numpy as np
+        # audio_enc = np.ascontiguousarray(spec.cpu().numpy()).view(np.complex64)
+        
+        audio_enc = audio_enc / torch.linalg.norm(audio_enc, dim=-1, keepdim=True) # normalize according to: https://github.com/AndreyGuzhov/AudioCLIP/blob/master/demo/AudioCLIP.ipynb
+        kv_embed = self.audio_embedder(audio_enc.permute(-1,0,1)) 
+        # kv_embed = torch.from_numpy(np.ascontiguousarray(kv_embed.transpose(1,2).cpu())).to(x.device)
+        # need to do the padding of audio here
+        return kv_embed.transpose(1,2)
 
     @torch.no_grad()
     def preprocessing(self, video_list, padding_val=0.0):
         """
             Generate batched features and masks from a list of dict items
         """
-        feats = [x['feats'] for x in video_list]
-        feats_lens = torch.as_tensor([feat.shape[-1] for feat in feats])
-        max_len = feats_lens.max(0).values.item()
+        batched_audio_inputs = None
+        
+        
+        video_feats = [x['feats'] for x in video_list]
+        audio_feats = self.process_raw_audio(video_list)
+        
+        # get video info
+        video_feats_lens = torch.as_tensor([feat.shape[-1] for feat in video_feats])
+        video_max_len = video_feats_lens.max(0).values.item()
+        
+        
+        # audio_feats = F.interpolate(audio_feats, scale_factor=scale_factor, mode='bicubic', align_corners=False)
+        
         if self.use_audio:
+            # get audio info
+            audio_feats_lens = torch.as_tensor([feat.shape[-1] for feat in audio_feats])
+            audio_max_len = audio_feats_lens.max(0).values.item()
             audio_tracks = [x['audio_track'] for x in video_list]
             audio_lens = torch.as_tensor([audio_track.shape[-1] for audio_track in audio_tracks])
-            max_audio_len = audio_lens.max(0).values.item()
 
         if self.training:
-            assert max_len <= self.max_seq_len, "Input length must be smaller than max_seq_len during training"
+            assert video_max_len <= self.max_seq_len, "Input length must be smaller than max_seq_len during training"
+            # if self.use_audio:
+            #     assert audio_max_len <= self.max_seq_len, "Input length must be smaller than max_seq_len during training"
             # set max_len to self.max_seq_len
-            max_len = self.max_seq_len
+            video_max_len = self.max_seq_len
+            if self.use_audio:
+                audio_max_len = self.max_seq_len
             # batch input shape B, C, T
-            batch_shape = [len(feats), feats[0].shape[0], max_len]
-            batched_inputs = feats[0].new_full(batch_shape, padding_val)
-            for feat, pad_feat in zip(feats, batched_inputs):
-                pad_feat[..., :feat.shape[-1]].copy_(feat)
+            video_batch_shape = [len(video_feats), video_feats[0].shape[0], video_max_len]
+            if self.use_audio:
+                audio_batch_shape = [len(audio_feats), audio_feats[0].shape[0], audio_max_len]
+            batched_video_inputs = video_feats[0].new_full(video_batch_shape, padding_val)
+            if self.use_audio:
+                batched_audio_inputs = audio_feats[0].new_full(audio_batch_shape, padding_val)
+            for video_feat, pad_video_feat, audio_feat, pad_audio_feat  in zip(video_feats, batched_video_inputs, audio_feats, batched_audio_inputs):
+                pad_video_feat[..., :video_feat.shape[-1]].copy_(video_feat)
+                if self.use_audio:
+                    _x = audio_feat.shape[-1] if audio_feat.shape[-1] < self.max_seq_len else self.max_seq_len
+                    pad_audio_feat[:, :_x].copy_(audio_feat[:, :_x])
+                
         else:
             assert len(video_list) == 1, "Only support batch_size = 1 during inference"
             # input length < self.max_seq_len, pad to max_seq_len
-            if max_len <= self.max_seq_len:
-                max_len = self.max_seq_len
+            if video_max_len <= self.max_seq_len:
+                video_max_len = self.max_seq_len
             else:
                 # pad the input to the next divisible size
                 stride = self.max_div_factor
-                max_len = (max_len + (stride - 1)) // stride * stride
-            padding_size = [0, max_len - feats_lens[0]]
-            batched_inputs = F.pad(
-                feats[0], padding_size, value=padding_val).unsqueeze(0)
+                video_max_len = (video_max_len + (stride - 1)) // stride * stride
+            padding_size = [0, video_max_len - video_feats_lens[0]]
+            batched_video_inputs = F.pad(
+                video_feats[0], padding_size, value=padding_val).unsqueeze(0)
+            if self.use_audio:
+                batched_audio_inputs = F.pad(
+                    audio_feats[0], padding_size, value=padding_val).unsqueeze(0)
 
         # generate the mask
-        batched_masks = torch.arange(max_len)[None, :] < feats_lens[:, None]
+        batched_masks = torch.arange(video_max_len)[None, :] < video_feats_lens[:, None]
 
         # push to device
-        batched_inputs = batched_inputs.to(self.device)
+        batched_video_inputs = batched_video_inputs.to(self.device)
+        if self.use_audio:
+            batched_audio_inputs = batched_audio_inputs.to(self.device)
         batched_masks = batched_masks.unsqueeze(1).to(self.device)
-
-        return batched_inputs, batched_masks
+        
+        if self.use_audio:
+            return batched_video_inputs, batched_audio_inputs, batched_masks
+        
+        return batched_video_inputs, None, batched_masks
 
     @torch.no_grad()
     def label_points(self, points, gt_segments, gt_labels, gt_activations):

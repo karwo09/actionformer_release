@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
+import numpy as np
 # import clip model
 import transformers
 from transformers import AutoTokenizer, CLIPTextModel
@@ -50,8 +51,7 @@ class ProjectionHead(nn.Module):
     # Projection head for CLIP
     def __init__(self, embedding_dim: int, projection_dim: int, dropout: float) -> None:
         super().__init__()
-
-
+        
         self.projection = nn.Linear(embedding_dim, projection_dim)
         self.gelu = nn.GELU()
         self.fc = nn.Linear(projection_dim, projection_dim)
@@ -72,6 +72,8 @@ class ProjectionHead(nn.Module):
 
 
         return self.layer_norm(x)
+
+
 
 
 @register_backbone("convTransformer")
@@ -116,15 +118,7 @@ class ConvTransformerBackbone(nn.Module):
             self.text_encoder = TextEncoder("openai/clip-vit-base-patch32", trainable=True)
             self.text_embedder = ProjectionHead(512, 512, 0.1)
         
-        if use_audio:
-            print("Loading AudioCLIP")
-            from AudioCLIP.audioclip.model import AudioCLIP
-            from AudioCLIP.audioclip.utils.transforms import ToTensor1D
-            AUDIOCLIP_PATH = "/home/karolwojtulewicz/code/actionformer_release/pretrained/AudioCLIP/AudioCLIP-Full-Training.pt"
-            aclp = AudioCLIP(pretrained=AUDIOCLIP_PATH)
-            self.audio_transforms = ToTensor1D()
-            self.audio_encoder = aclp
-            self.audio_embedder = ProjectionHead(2048, 512, 0.1)
+        
 
         # feature projection
         self.n_in = n_in
@@ -212,15 +206,7 @@ class ConvTransformerBackbone(nn.Module):
                 text_enc = self.text_encoder(kv) # get token embeddings
                 kv_embed = self.text_embedder(text_enc) # get projection head embeddings from the CLIP model  
             elif(self.use_audio):
-                # get the audio embedding for this layer
-                if(len(kv) == 1):
-                    kv = torch.from_numpy(kv[0]).unsqueeze(0)
-                else:
-                    # pad with torch.nn.utils.rnn.pad_sequence
-                    kv = torch.nn.utils.rnn.pad_sequence([torch.tensor(part) for part in kv], batch_first=True)
-                # audio_enc = self.audio_transforms(kv)
-                ((audio_enc, _, _), _), _ = self.audio_encoder(kv, only_embedding=True, flatten=True) # get token embeddings, wierd tuple unpacking, but this is how it works...
-                kv_embed = self.audio_embedder(audio_enc.permute(0, -1, -2)) 
+               kv_embed = kv
             else:
                 kv_embed = x
             

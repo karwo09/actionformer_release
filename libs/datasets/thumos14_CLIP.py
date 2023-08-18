@@ -61,8 +61,10 @@ class THUMOS14CLIPDataset(Dataset):
         self.crop_ratio = crop_ratio
         
         # audio
-        self.SAMPLE_RATE = 16000 # 16kHz as per https://arxiv.org/abs/2106.14118
-        self.SAMPLE_RATE = 2000 # 4kHz 
+        # self.SAMPLE_RATE = 16000 # 16kHz as per https://arxiv.org/abs/2106.14118
+        
+        #TODO: Need to check if AudioCLIP can consume less VRAM
+        self.SAMPLE_RATE = 2099 # 2kHz to match the video frame rate
         self.audio_extention = '.wav'
 
         # load database and select the subset
