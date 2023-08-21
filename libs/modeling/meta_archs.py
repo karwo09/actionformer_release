@@ -1,4 +1,5 @@
 import math
+import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -591,7 +592,7 @@ class PtTransformer(nn.Module):
         # audio_enc = self.audio_transforms(kv)
         # ((audio_enc, _, _), _), _ = self.audio_encoder(kv, only_embedding=True, flatten=True) # get token embeddings, wierd tuple unpacking, but this is how it works...
         audio_enc = self.audio_encoder(kv.reshape(1, 1, -1)).squeeze().to(self.device) # get token embeddings, wierd tuple unpacking, but this is how it works...
-        # import numpy as np
+        audio_enc = 10 * torch.log10(torch.abs(audio_enc) ** 2 + 1e-18).squeeze()
         # audio_enc = np.ascontiguousarray(spec.cpu().numpy()).view(np.complex64)
         
         audio_enc = audio_enc / torch.linalg.norm(audio_enc, dim=-1, keepdim=True) # normalize according to: https://github.com/AndreyGuzhov/AudioCLIP/blob/master/demo/AudioCLIP.ipynb

@@ -142,6 +142,17 @@ class ConvTransformerBackbone(nn.Module):
                     stride=1, padding=n_embd_ks//2, bias=(not with_ln)
                 )
             )
+            self.embd.append(
+                TransformerBlock(
+                    n_embd, n_head,
+                    n_ds_strides=(1, 1),
+                    attn_pdrop=attn_pdrop,
+                    proj_pdrop=proj_pdrop,
+                    path_pdrop=path_pdrop,
+                    mha_win_size=self.mha_win_size[0],
+                    use_rel_pe=self.use_rel_pe
+                )
+            )
             if with_ln:
                 self.embd_norm.append(LayerNorm(n_embd))
             else:

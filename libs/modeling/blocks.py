@@ -272,7 +272,8 @@ class MaskedMHCA(nn.Module):
         B, C, T = x.size()
 
         k = v = kv if kv is not None else x
-        mask_kv = None if kv is not None else mask
+        # mask_kv = None if kv is not None else mask
+        mask_kv = mask
         # step 1: depth convolutions
         # query conv -> (B, nh * hs, T')
         q, qx_mask = self.query_conv(x, mask)
