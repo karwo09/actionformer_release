@@ -28,7 +28,6 @@ class ProjectionHeadAudio(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.layer_norm = nn.LayerNorm(projection_dim)
 
-
     def forward(self, x):
         x = self.conv1(x)
         x = F.gelu(x)
@@ -583,22 +582,24 @@ class PtTransformer(nn.Module):
     
     def process_raw_audio(self, video_list):
         kv = [video_list[i]['audio_track'] for i in range(len(video_list))]
-            # get the audio embedding for this layer
-        if(len(kv) == 1):
-            kv = torch.from_numpy(kv[0]).unsqueeze(0)
-        else:
-            # pad with torch.nn.utils.rnn.pad_sequence
-            kv = torch.nn.utils.rnn.pad_sequence([torch.tensor(part) for part in kv], batch_first=True)
-        # audio_enc = self.audio_transforms(kv)
-        # ((audio_enc, _, _), _), _ = self.audio_encoder(kv, only_embedding=True, flatten=True) # get token embeddings, wierd tuple unpacking, but this is how it works...
-        audio_enc = self.audio_encoder(kv.reshape(1, 1, -1)).squeeze().to(self.device) # get token embeddings, wierd tuple unpacking, but this is how it works...
-        audio_enc = 10 * torch.log10(torch.abs(audio_enc) ** 2 + 1e-18).squeeze()
-        # audio_enc = np.ascontiguousarray(spec.cpu().numpy()).view(np.complex64)
-        
-        audio_enc = audio_enc / torch.linalg.norm(audio_enc, dim=-1, keepdim=True) # normalize according to: https://github.com/AndreyGuzhov/AudioCLIP/blob/master/demo/AudioCLIP.ipynb
-        kv_embed = self.audio_embedder(audio_enc.permute(-1,0,1)) 
-        # kv_embed = torch.from_numpy(np.ascontiguousarray(kv_embed.transpose(1,2).cpu())).to(x.device)
-        # need to do the padding of audio here
+        # get the audio embedding for this layer
+        # pad with torch.nn.utils.rnn.pad_sequence
+        # 
+        audio_enc_list = []
+        for i in range(len(kv)):
+            # audio_enc = self.audio_transforms(kv)
+            # ((audio_enc, _, _), _), _ = self.audio_encoder(kv, only_embedding=True, flatten=True) # get token embeddings, wierd tuple unpacking, but this is how it works...
+            current = torch.from_numpy(kv[i])
+            audio_enc = self.audio_encoder(current.reshape(1, 1, -1)).to(self.device) # get token embeddings, wierd tuple unpacking, but this is how it works...
+            audio_enc = 10 * torch.log10(torch.abs(audio_enc) ** 2 + 1e-18)
+            audio_enc = audio_enc[:,:,:,0].squeeze(0)
+            
+            audio_enc = audio_enc / torch.linalg.norm(audio_enc, dim=-1, keepdim=True) # normalize according to: https://github.com/AndreyGuzhov/AudioCLIP/blob/master/demo/AudioCLIP.ipynb
+            # kv_embed = torch.from_numpy(np.ascontiguousarray(kv_embed.transpose(1,2).cpu())).to(x.device)
+            # need to do the padding of audio here
+            audio_enc_list.append(audio_enc.T)
+        audio_encs = torch.nn.utils.rnn.pad_sequence(audio_enc_list, batch_first=True)
+        kv_embed = self.audio_embedder(audio_encs.transpose(1,2)) 
         return kv_embed.transpose(1,2)
 
     @torch.no_grad()
@@ -665,6 +666,9 @@ class PtTransformer(nn.Module):
 
         # generate the mask
         batched_masks = torch.arange(video_max_len)[None, :] < video_feats_lens[:, None]
+        tmp = torch.zeros((batched_audio_inputs.shape[0], batched_audio_inputs.shape[1], video_max_len))
+        tmp[:,:,:(np.min((batched_audio_inputs.shape[-1], video_max_len)))] = batched_audio_inputs[:,:,:(np.min((batched_audio_inputs.shape[-1], video_max_len)))]
+        batched_audio_inputs = tmp
 
         # push to device
         batched_video_inputs = batched_video_inputs.to(self.device)

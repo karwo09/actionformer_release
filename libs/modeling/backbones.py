@@ -142,17 +142,6 @@ class ConvTransformerBackbone(nn.Module):
                     stride=1, padding=n_embd_ks//2, bias=(not with_ln)
                 )
             )
-            self.embd.append(
-                TransformerBlock(
-                    n_embd, n_head,
-                    n_ds_strides=(1, 1),
-                    attn_pdrop=attn_pdrop,
-                    proj_pdrop=proj_pdrop,
-                    path_pdrop=path_pdrop,
-                    mha_win_size=self.mha_win_size[0],
-                    use_rel_pe=self.use_rel_pe
-                )
-            )
             if with_ln:
                 self.embd_norm.append(LayerNorm(n_embd))
             else:
@@ -217,7 +206,7 @@ class ConvTransformerBackbone(nn.Module):
                 text_enc = self.text_encoder(kv) # get token embeddings
                 kv_embed = self.text_embedder(text_enc) # get projection head embeddings from the CLIP model  
             elif(self.use_audio):
-               kv_embed = kv
+               kv_embed = kv.transpose(1,2)
             else:
                 kv_embed = x
             
@@ -255,7 +244,7 @@ class ConvTransformerBackbone(nn.Module):
 
         # stem transformer
         for idx in range(len(self.stem)):
-            if self.use_text:
+            if self.use_text or self.use_audio:
                 x, mask = self.stem[idx](x, mask, text=kv_embed, cross_attn=cross_attn)
             else:
                 x, mask = self.stem[idx](x, mask)
