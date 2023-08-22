@@ -1,6 +1,7 @@
 # python imports
 import argparse
 import os
+from torchviz import make_dot
 import glob
 import time
 from pprint import pprint
@@ -71,10 +72,16 @@ def main(args):
         ckpt_file,
         map_location = lambda storage, loc: storage.cuda(cfg['devices'][0])
     )
+    
+    
+    out = model(val_dataset[0])
+    make_dot(out).render("rnn_torchviz", format="png")
+    
     # load ema model instead
     print("Loading from EMA model ...")
     model.load_state_dict(checkpoint['state_dict_ema'])
     del checkpoint
+    
 
     # set up evaluator
     det_eval, output_file = None, None

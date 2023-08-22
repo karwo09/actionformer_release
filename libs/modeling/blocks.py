@@ -733,9 +733,11 @@ class TransformerBlock(nn.Module):
     def forward(self, x, mask, pos_embd=None, text=None,cross_attn=False):
         # pre-LN transformer: https://arxiv.org/pdf/2002.04745.pdf
         if text is not None and cross_attn:
-            text = text.transpose(1, 2)
+            # text = text.transpose(1, 2)
             out, out_mask = self.attn(self.ln1(x), mask, text)
         else:
+            if x.shape[-1] != mask.shape[-1]:
+                x = x.transpose(1, 2)
             out, out_mask = self.attn(self.ln1(x), mask)
         out_mask_float = out_mask.to(out.dtype)
         out = self.pool_skip(x) * out_mask_float + self.drop_path_attn(out)

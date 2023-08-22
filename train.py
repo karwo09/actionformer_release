@@ -186,11 +186,11 @@ if __name__ == '__main__':
         class Args:
             def __init__(self):
                 self.config = './configs/thumos_i3d_CLIP.yaml'
-                self.print_freq =5
+                self.print_freq = 5
                 self.ckpt_freq = 5
                 self.output = 'reproduce'
                 self.debug = False
-                self.resume = '/home/karolwojtulewicz/code/actionformer_release/ckpt/thumos_i3d_CLIP_reproduce/epoch_035.pth.tar'
-                # self.resume = ''
+                # self.resume = '/home/karolwojtulewicz/code/actionformer_release/ckpt/thumos_i3d_CLIP_reproduce/epoch_035.pth.tar'
+                self.resume = ''
         args = Args()
     main(args)

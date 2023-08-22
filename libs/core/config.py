@@ -44,7 +44,7 @@ DEFAULTS = {
         "backbone_type": 'convTransformer',
         # type of FPN (fpn | identity)
         "fpn_type": "identity",
-        "backbone_arch": (2, 2, 5),
+        "backbone_arch": (2, 2, 5, 2),
         # scale factor between pyramid levels
         "scale_factor": 2,
         # regression range for pyramid levels
@@ -76,7 +76,7 @@ DEFAULTS = {
         # defines the max length of the buffered points
         "max_buffer_len_factor": 6.0,
         # disable abs position encoding (added to input embedding)
-        "use_abs_pe": False,
+        "use_abs_pe": True,
         # use rel position encoding (added to self-attention)
         "use_rel_pe": False,
     },
