@@ -74,8 +74,8 @@ def main(args):
     )
     
     
-    out = model(val_dataset[0])
-    make_dot(out).render("rnn_torchviz", format="png")
+    # out = model(val_dataset[0])
+    # make_dot(out).render("rnn_torchviz", format="png")
     
     # load ema model instead
     print("Loading from EMA model ...")

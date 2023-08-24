@@ -93,7 +93,7 @@ class BottleNeckAudioVideo(nn.Module):
                     n_ds_strides=(1, 1),
                     attn_pdrop=0.5,
                     proj_pdrop=0.5,
-                    # mha_win_size=self.mha_win_size[0],
+                    mha_win_size=19,
                     # use_rel_pe=self.use_rel_pe
                 ))
         
@@ -104,8 +104,7 @@ class BottleNeckAudioVideo(nn.Module):
                     n_ds_strides=(1, 1),
                     attn_pdrop=0.5,
                     proj_pdrop=0.5,
-                    # mha_win_size=self.mha_win_size[0],
-                    # use_rel_pe=self.use_rel_pe
+                    mha_win_size=19
                 ))
         self.layers_audio.append(nn.Linear(self.d_size[-1], out_size))
         
@@ -152,7 +151,7 @@ class ConvTransformerBackbone(nn.Module):
         n_head,                # number of head for self-attention in transformers
         n_embd_ks,             # conv kernel size of the embedding network
         max_len,               # max sequence length
-        arch = (2, 2, 5, 2),      # (#convs, #stem transformers, #branch transformers, #bottle neck transformers)
+        arch = (2, 2, 5, 2,5),      # (#convs, #video stem transformers, #branch transformers, #bottle neck transformers #audio stem)
         mha_win_size = [-1]*6, # size of local window for mha
         scale_factor = 2,      # dowsampling rate for the branch
         with_ln = False,       # if to attach layernorm after conv
@@ -165,7 +164,7 @@ class ConvTransformerBackbone(nn.Module):
         use_audio = False,      # use audio embedding
     ):
         super().__init__()
-        assert len(arch) == 4
+        assert len(arch) == 5
         assert len(mha_win_size) == (1 + arch[2])
         self.n_in = n_in
         self.arch = arch
@@ -233,7 +232,7 @@ class ConvTransformerBackbone(nn.Module):
             
         # stem network using (vanilla) transformer
         self.stem_audio = nn.ModuleList()
-        for idx in range(arch[1]):
+        for idx in range(arch[4]):
             self.stem_audio.append(
                 TransformerBlock(
                     n_embd, n_head,
@@ -245,9 +244,9 @@ class ConvTransformerBackbone(nn.Module):
                     use_rel_pe=self.use_rel_pe
                 )
             )
-        
+        self.n_fusion_layers = arch[3]
         # stem network using (vanilla) transformer
-        self.bottle_neck = BottleNeckAudioVideo(arch[3], d_size=n_embd//2, out_size=n_embd)
+        self.bottle_neck = BottleNeckAudioVideo(self.n_fusion_layers, d_size=n_embd//2, out_size=n_embd)
 
         # main branch using transformer with pooling
         self.branch = nn.ModuleList()
@@ -324,7 +323,6 @@ class ConvTransformerBackbone(nn.Module):
             # add pe to x
             x_video = x_video + pe[:, :, :T] * mask_video.to(x_video.dtype)
 
-        n_fusion_layers = 2
         outs_video = []
         outs_audio = []
         
@@ -334,8 +332,12 @@ class ConvTransformerBackbone(nn.Module):
                 x_video, mask_video = self.stem_video[idx](x_video, mask_video, text=x_audio, cross_attn=cross_attn)
             else:
                 x_video, mask_video = self.stem_video[idx](x_video, mask_video)
-                x_audio, mask_audio = self.stem_audio[idx](x_audio, mask_video)
-                outs_video.append(x_video)
+                if(len(self.stem_video) - idx <= self.n_fusion_layers):
+                    outs_video.append(x_video)
+        
+        for idx in range(len(self.stem_audio)):
+            x_audio, mask_audio = self.stem_audio[idx](x_audio, mask_video)
+            if(len(self.stem_audio) - idx <= self.n_fusion_layers):
                 outs_audio.append(x_audio)
                 
         x = self.bottle_neck(outs_video, outs_audio, mask_video).transpose(1,2)
