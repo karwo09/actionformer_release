@@ -41,10 +41,11 @@ DEFAULTS = {
     # network architecture
     "model": {
         # type of backbone (convTransformer | conv)
-        "backbone_type": 'convTransformer',
+        "backbone_type": 'AVFusionConvTransformer',
         # type of FPN (fpn | identity)
         "fpn_type": "identity",
         "backbone_arch": (2, 2, 5, 2, 2),
+        # "backbone_arch": (2, 2, 5, 2, 2), # for original ActionFormer
         # scale factor between pyramid levels
         "scale_factor": 2,
         # regression range for pyramid levels

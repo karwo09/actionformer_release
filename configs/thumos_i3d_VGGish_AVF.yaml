@@ -1,4 +1,4 @@
-dataset_name: thumos_CLIP
+dataset_name: thumos_AVF
 train_split: ['validation']
 val_split: ['test']
 dataset: {
@@ -36,7 +36,9 @@ train_cfg: {
   center_sample: radius,
   center_sample_radius: 1.5,
   use_text: False,
-  use_audio: True
+  use_audio: True,
+  aformer_path: /home/karolwojtulewicz/code/actionformer_release/pretrained/thumos_i3d_reproduce/epoch_034.pth.tar,
+  freeze_aformer: True,
 }
 test_cfg: {
   voting_thresh: 0.7,

@@ -364,7 +364,7 @@ class PtTransformer(nn.Module):
 
         # we will need a better way to dispatch the params to backbones / necks
         # backbone network: conv + transformer
-        assert backbone_type in ['convTransformer', 'conv']
+        assert backbone_type in ['convTransformer', 'conv', 'AVFusionConvTransformer']
         if backbone_type == 'convTransformer':
             self.backbone = make_backbone(
                 'convTransformer',
@@ -383,8 +383,30 @@ class PtTransformer(nn.Module):
                     'path_pdrop' : self.train_droppath,
                     'use_abs_pe' : use_abs_pe,
                     'use_rel_pe' : use_rel_pe,
+                }
+            )
+        elif backbone_type == 'AVFusionConvTransformer':
+            self.backbone = make_backbone(
+                'AVFusionConvTransformer',
+                **{
+                    'n_in' : input_dim,
+                    'n_embd' : embd_dim,
+                    'n_head': n_head,
+                    'n_embd_ks': embd_kernel_size,
+                    'max_len': max_seq_len,
+                    'arch' : backbone_arch,
+                    'mha_win_size': self.mha_win_size,
+                    'scale_factor' : scale_factor,
+                    'with_ln' : embd_with_ln,
+                    'attn_pdrop' : 0.0,
+                    'proj_pdrop' : self.train_dropout,
+                    'path_pdrop' : self.train_droppath,
+                    'use_abs_pe' : use_abs_pe,
+                    'use_rel_pe' : use_rel_pe,
                     'use_text' : self.use_text,
                     'use_audio' : self.use_audio,
+                    'aformer_path' : train_cfg['aformer_path'],
+                    'freeze_aformer' : train_cfg['freeze_aformer'],
                 }
             )
         else:

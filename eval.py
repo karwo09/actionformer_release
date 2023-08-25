@@ -79,7 +79,11 @@ def main(args):
     
     # load ema model instead
     print("Loading from EMA model ...")
-    model.load_state_dict(checkpoint['state_dict_ema'])
+    try:
+        model.load_state_dict(checkpoint['state_dict_ema'])
+    except:
+        model.load_state_dict(checkpoint['state_dict'], strict=False)
+        
     del checkpoint
     
 
@@ -135,8 +139,8 @@ if __name__ == '__main__':
         args = parser.parse_args()
     except:
         class Args:
-            ckpt = "./ckpt/thumos_i3d_CLIP_reproduce"
-            config = "./configs/thumos_i3d_CLIP.yaml"
+            ckpt = "./ckpt/thumos_i3d_VGGish_AVF_reproduce"
+            config = "./configs/thumos_i3d_VGGish_AVF.yaml"
             epoch = -1
             topk = -1
             saveonly = False
