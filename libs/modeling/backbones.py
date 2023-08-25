@@ -110,7 +110,72 @@ class BottleNeckAudioVideo(nn.Module):
         
         self.layers_out = nn.ModuleList()
         for c in range(num_layers):
-            self.layers_out.append(nn.Conv1d(out_size, out_size, 1))
+            self.layers_out.append(nn.Conv1d(self.d_size[-1]*2, out_size, 1))
+        
+        
+        self.out = nn.Conv1d(out_size*num_layers, out_size, 1)
+        
+            
+            
+
+        
+    def forward(self,embeddings_video, embeddings_audio, mask) -> torch.Tensor:
+        assert len(embeddings_video) == len(embeddings_audio) == self.num_layers, "embeddings_video and embeddings_audio must have the same length"
+        # assert embeddings_video[0].shape == embeddings_audio[0].shape, "embeddings_video and embeddings_audio must have the same shape"
+        
+        
+        bfl = []
+        for i in range(self.num_layers):
+            em_vid = self.linear_down_v(embeddings_video[i].transpose(1,2)).transpose(1,2)
+            em_vid = F.gelu(em_vid)
+            em_aud = self.linear_down_a(embeddings_audio[i].transpose(1,2)).transpose(1,2)
+            em_aud = F.gelu(em_aud)
+            embedding_video, mask = self.layers_video[i](em_vid,mask,text=em_aud,cross_attn=True)
+            embedding_audio, mask = self.layers_audio[i](em_aud,mask,text=em_vid,cross_attn=True)
+            cat = torch.cat((embedding_video, embedding_audio), dim=1)
+            bfl.append(self.layers_out[i](cat))
+            
+            # i += 2 # increment the layer number
+        
+        return self.out(torch.cat(bfl, dim=1)).transpose(1,2)
+    
+
+class BottleNeckAudioVideoHMO(nn.Module):
+    def __init__(self, num_layers, d_size = 256, in_size_video=512, in_size_audio=128, out_size=512) -> None:
+        super().__init__()
+        self.num_layers = num_layers
+        if type(d_size) == int:
+            self.d_size = [d_size]*num_layers
+        else:
+            self.d_size = d_size
+        
+        self.linear_down_v = nn.Linear(in_size_video, self.d_size[0])
+        self.linear_down_a = nn.Linear(in_size_audio, self.d_size[0])
+        self.layers_video = nn.ModuleList()
+        for i in range(num_layers):
+            self.layers_video.append(TransformerBlock(
+                    self.d_size[i], 8,
+                    n_ds_strides=(1, 1),
+                    attn_pdrop=0.5,
+                    proj_pdrop=0.5,
+                    mha_win_size=19,
+                    # use_rel_pe=self.use_rel_pe
+                ))
+        
+        self.layers_audio = nn.ModuleList()
+        for a in range(num_layers):
+            self.layers_audio.append(TransformerBlock(
+                    self.d_size[a], 8,
+                    n_ds_strides=(1, 1),
+                    attn_pdrop=0.5,
+                    proj_pdrop=0.5,
+                    mha_win_size=19
+                ))
+        self.layers_audio.append(nn.Linear(self.d_size[-1], out_size))
+        
+        self.layers_out = nn.ModuleList()
+        for c in range(num_layers):
+            self.layers_out.append(nn.Conv1d(self.d_size[-1]*2, out_size, 1))
         
         
         self.out = nn.Conv1d(out_size*num_layers, out_size, 1)
@@ -247,7 +312,7 @@ class ConvTransformerBackbone(nn.Module):
             )
         self.n_fusion_layers = arch[3]
         # stem network using (vanilla) transformer
-        self.bottle_neck = BottleNeckAudioVideo(self.n_fusion_layers, d_size=n_embd//4, out_size=n_embd)
+        self.bottle_neck = BottleNeckAudioVideo(self.n_fusion_layers, d_size=n_embd//8, out_size=128)
 
         # main branch using transformer with pooling
         self.branch = nn.ModuleList()

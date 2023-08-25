@@ -189,7 +189,7 @@ if __name__ == '__main__':
                 self.print_freq = 5
                 self.ckpt_freq = 5
                 self.output = 'reproduce'
-                self.debug = False
+                self.debug = True
                 # self.resume = '/home/karolwojtulewicz/code/actionformer_release/ckpt/thumos_i3d_CLIP_reproduce/epoch_035.pth.tar'
                 self.resume = ''
         args = Args()

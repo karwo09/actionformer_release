@@ -18,7 +18,8 @@ dataset: {
 model: {
   fpn_type: identity,
   max_buffer_len_factor: 6.0,
-  n_mha_win_size: -1,
+  head_dim: 128,
+  # n_mha_win_size: -1,
   n_mha_win_size: 19,
 }
 opt: {
