@@ -455,13 +455,13 @@ class PtTransformer(nn.Module):
         self.loss_normalizer_momentum = 0.9
         
         if self.use_audio:
-            print("Loading AudioCLIP")
-            from AudioCLIP.audioclip.model import AudioCLIP
-            from AudioCLIP.audioclip.utils.transforms import ToTensor1D
-            AUDIOCLIP_PATH = "/home/karolwojtulewicz/code/actionformer_release/pretrained/AudioCLIP/AudioCLIP-Partial-Training.pt"
-            aclp = AudioCLIP(pretrained=AUDIOCLIP_PATH)
-            self.audio_transforms = ToTensor1D()
-            self.audio_encoder = aclp.audio.spectrogram
+            # print("Loading AudioCLIP")
+            # from AudioCLIP.audioclip.model import AudioCLIP
+            # from AudioCLIP.audioclip.utils.transforms import ToTensor1D
+            # AUDIOCLIP_PATH = "/home/karolwojtulewicz/code/actionformer_release/pretrained/AudioCLIP/AudioCLIP-Partial-Training.pt"
+            # aclp = AudioCLIP(pretrained=AUDIOCLIP_PATH)
+            # self.audio_transforms = ToTensor1D()
+            self.audio_encoder = None
             self.audio_embedder = ProjectionHeadAudio(1025, 512, 0.1)
 
     @property
@@ -611,7 +611,7 @@ class PtTransformer(nn.Module):
         
         
         video_feats = [x['feats'] for x in video_list]
-        audio_feats = self.process_raw_audio(video_list)
+        audio_feats = [x['audio_track'] for x in video_list]
         
         # get video info
         video_feats_lens = torch.as_tensor([feat.shape[-1] for feat in video_feats])
@@ -622,10 +622,10 @@ class PtTransformer(nn.Module):
         
         if self.use_audio:
             # get audio info
-            audio_feats_lens = torch.as_tensor([feat.shape[-1] for feat in audio_feats])
+            audio_feats_lens = torch.as_tensor([feat.shape[0] for feat in audio_feats])
             audio_max_len = audio_feats_lens.max(0).values.item()
             audio_tracks = [x['audio_track'] for x in video_list]
-            audio_lens = torch.as_tensor([audio_track.shape[-1] for audio_track in audio_tracks])
+            audio_lens = torch.as_tensor([audio_track.shape[0] for audio_track in audio_tracks])
 
         if self.training:
             assert video_max_len <= self.max_seq_len, "Input length must be smaller than max_seq_len during training"
@@ -638,15 +638,15 @@ class PtTransformer(nn.Module):
             # batch input shape B, C, T
             video_batch_shape = [len(video_feats), video_feats[0].shape[0], video_max_len]
             if self.use_audio:
-                audio_batch_shape = [len(audio_feats), audio_feats[0].shape[0], audio_max_len]
+                audio_batch_shape = [len(audio_feats),  audio_max_len, audio_feats[0].shape[1]]
             batched_video_inputs = video_feats[0].new_full(video_batch_shape, padding_val)
             if self.use_audio:
                 batched_audio_inputs = audio_feats[0].new_full(audio_batch_shape, padding_val)
             for video_feat, pad_video_feat, audio_feat, pad_audio_feat  in zip(video_feats, batched_video_inputs, audio_feats, batched_audio_inputs):
                 pad_video_feat[..., :video_feat.shape[-1]].copy_(video_feat)
                 if self.use_audio:
-                    _x = audio_feat.shape[-1] if audio_feat.shape[-1] < self.max_seq_len else self.max_seq_len
-                    pad_audio_feat[:, :_x].copy_(audio_feat[:, :_x])
+                    _x = audio_feat.shape[0] if audio_feat.shape[0] < self.max_seq_len else self.max_seq_len
+                    pad_audio_feat[:_x].copy_(audio_feat[:_x])
                 
         else:
             assert len(video_list) == 1, "Only support batch_size = 1 during inference"
@@ -657,15 +657,18 @@ class PtTransformer(nn.Module):
                 # pad the input to the next divisible size
                 stride = self.max_div_factor
                 video_max_len = (video_max_len + (stride - 1)) // stride * stride
-            padding_size = [0, video_max_len - video_feats_lens[0]]
+            padding_size_v = [0, video_max_len - video_feats_lens[0]]
+            padding_size_a = [0,video_max_len - audio_lens[0]]
             batched_video_inputs = F.pad(
-                video_feats[0], padding_size, value=padding_val).unsqueeze(0)
+                video_feats[0], padding_size_v, value=padding_val).unsqueeze(0)
             if self.use_audio:
                 batched_audio_inputs = F.pad(
-                    audio_feats[0], padding_size, value=padding_val).unsqueeze(0)
+                    audio_feats[0].T, padding_size_a, value=padding_val).unsqueeze(0)
+                batched_audio_inputs = batched_audio_inputs.transpose(1,2)
 
         # generate the mask
         batched_masks = torch.arange(video_max_len)[None, :] < video_feats_lens[:, None]
+        batched_audio_inputs = batched_audio_inputs.transpose(1,2)
         tmp = torch.zeros((batched_audio_inputs.shape[0], batched_audio_inputs.shape[1], video_max_len))
         tmp[:,:,:(np.min((batched_audio_inputs.shape[-1], video_max_len)))] = batched_audio_inputs[:,:,:(np.min((batched_audio_inputs.shape[-1], video_max_len)))]
         batched_audio_inputs = tmp

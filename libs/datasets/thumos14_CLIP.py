@@ -10,6 +10,7 @@ from torch.nn import functional as F
 
 from .datasets import register_dataset
 from .data_utils import truncate_feats
+from numpy.lib.stride_tricks import as_strided
 
 @register_dataset("thumos_CLIP")
 class THUMOS14CLIPDataset(Dataset):
@@ -65,7 +66,7 @@ class THUMOS14CLIPDataset(Dataset):
         
         #TODO: Need to check if AudioCLIP can consume less VRAM
         self.SAMPLE_RATE = 4198 # 2kHz to match the video frame rate
-        self.audio_extention = '.wav'
+        self.audio_extention = '.csv'
 
         # load database and select the subset
         dict_db, label_dict = self._load_json_db(self.json_file)
@@ -162,17 +163,38 @@ class THUMOS14CLIPDataset(Dataset):
                                 self.file_prefix + video_item['id'] + self.file_ext)
         feats = np.load(filename).astype(np.float32)
         
-        # load audio
+        # Load audio:
+        # Divide by current fps and multiply by original 30fps then the stride is 4 and padding is 2 on each side
+        # (T_a/16*30/4)-4 gives the amount of feats in the video -4 indicates padding with zeros probably
+        # This can be fixed with strides:
+        # (T- T/2 - T/32)-4, stride of 2 and a stride of 32 and padding of 2 on each side
+        
         audio_filename = os.path.join(self.feat_folder,
                                 self.file_prefix + video_item['id'] + self.audio_extention)
-        track, _ = librosa.load(audio_filename, sr=self.SAMPLE_RATE, dtype=np.float32)
+        track = np.genfromtxt(audio_filename, delimiter=",") # (T, 128)
+        # track, _ = librosa.load(audio_filename, sr=self.SAMPLE_RATE, dtype=np.float32)
 
         # deal with downsampling (= increased feat stride)
         feats = feats[::self.downsample_rate, :]
+        
+        # this is the downsampling rate for the audio shown above
+        # df1 = df [df.index % 3 != 0] 
+        # Excludes every 3rd row starting from 0 df2 = df [df.index % 3 == 0] 
+        # Selects every 3rd raw starting from 0.
+        # Create a mask for the strides:
+        T = track.shape[0]
+        x = (T - T//2 - T//32) - 4
+        new_shape = (track.shape[0]//x, x) + track.shape[1:]
+        new_strides = (x*track.strides[0],) + track.strides
+        track = as_strided(track, shape=new_shape, strides=new_strides)
+        if len(track.shape) == 3:
+            track = np.mean(track, axis=0)
         feat_stride = self.feat_stride * self.downsample_rate
         feat_offset = 0.5 * self.num_frames / feat_stride
         # T x C -> C x T
         feats = torch.from_numpy(np.ascontiguousarray(feats.transpose()))
+        # track = torch.from_numpy(np.ascontiguousarray(track.transpose()))
+        track = torch.from_numpy(track)
 
         # convert time stamp (in second) into temporal feature grids
         # ok to have small negative values here

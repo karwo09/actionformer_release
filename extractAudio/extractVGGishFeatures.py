@@ -71,15 +71,15 @@ def getFeature(_filename, input_dir, output_dir,frames,snippet_size, vggmodel, s
     featureVec = tf.Variable([[ 0 for i in range(128) ]], dtype='float32')
 
     # Load audio file as tensor
-    audio, sr = torchaudio.load(input_dir + '/' + filename + '.wav')
+    audio, sr = torchaudio.load(input_dir + '/' + filename + '.wav') # This returns a tensor of size (1, num_samples) and the sampling rate
     # Convert to mono
     audio = audio.mean(axis=0)
     # Resample to 16kHz
-    audio = torchaudio.transforms.Resample(sr, sampling_rate)(audio.view(1,-1))[0]
+    audio = torchaudio.transforms.Resample(sr, sampling_rate)(audio.view(1,-1))[0] # audio.view(1,-1) converts the tensor to (1, num_samples) and the [0] at the end converts it back to (num_samples)  
 
     # Iterate over all snippets and extract feature vector
     pointerr = len(audio) // frameCnt
-    frameSize = len(audio) // frameCnt
+    frameSize = len(audio) // frameCnt # It gives out the frame size which is the number of audio samples in each frame
     for i in range(frameCnt):
         # Get audio segment b/w start_time and end_time
         chunk = audio[max(0, pointerr - (snippet_size // 2)):min(len(audio), pointerr + (snippet_size // 2))]

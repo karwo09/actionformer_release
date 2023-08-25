@@ -76,7 +76,7 @@ class ProjectionHead(nn.Module):
 
 
 class BottleNeckAudioVideo(nn.Module):
-    def __init__(self, num_layers, d_size = 256, in_size=512, out_size=512) -> None:
+    def __init__(self, num_layers, d_size = 256, in_size_video=512, in_size_audio=128, out_size=512) -> None:
         super().__init__()
         self.num_layers = num_layers
         if type(d_size) == int:
@@ -84,8 +84,8 @@ class BottleNeckAudioVideo(nn.Module):
         else:
             self.d_size = d_size
         
-        self.linear_down_v = nn.Linear(in_size, self.d_size[0])
-        self.linear_down_a = nn.Linear(in_size, self.d_size[0])
+        self.linear_down_v = nn.Linear(in_size_video, self.d_size[0])
+        self.linear_down_a = nn.Linear(in_size_audio, self.d_size[0])
         self.layers_video = nn.ModuleList()
         for i in range(num_layers):
             self.layers_video.append(TransformerBlock(
@@ -121,7 +121,7 @@ class BottleNeckAudioVideo(nn.Module):
         
     def forward(self,embeddings_video, embeddings_audio, mask) -> torch.Tensor:
         assert len(embeddings_video) == len(embeddings_audio) == self.num_layers, "embeddings_video and embeddings_audio must have the same length"
-        assert embeddings_video[0].shape == embeddings_audio[0].shape, "embeddings_video and embeddings_audio must have the same shape"
+        # assert embeddings_video[0].shape == embeddings_audio[0].shape, "embeddings_video and embeddings_audio must have the same shape"
         
         
         bfl = []
@@ -176,6 +176,7 @@ class ConvTransformerBackbone(nn.Module):
         self.use_rel_pe = use_rel_pe
         self.use_text = use_text
         self.use_audio = use_audio
+        self.audio_embed = 128
         
         if use_text:
             self.text_encoder = TextEncoder("openai/clip-vit-base-patch32", trainable=True)
@@ -235,7 +236,7 @@ class ConvTransformerBackbone(nn.Module):
         for idx in range(arch[4]):
             self.stem_audio.append(
                 TransformerBlock(
-                    n_embd, n_head,
+                    self.audio_embed, n_head,
                     n_ds_strides=(1, 1),
                     attn_pdrop=attn_pdrop,
                     proj_pdrop=proj_pdrop,
@@ -246,7 +247,7 @@ class ConvTransformerBackbone(nn.Module):
             )
         self.n_fusion_layers = arch[3]
         # stem network using (vanilla) transformer
-        self.bottle_neck = BottleNeckAudioVideo(self.n_fusion_layers, d_size=n_embd//2, out_size=n_embd)
+        self.bottle_neck = BottleNeckAudioVideo(self.n_fusion_layers, d_size=n_embd//4, out_size=n_embd)
 
         # main branch using transformer with pooling
         self.branch = nn.ModuleList()

@@ -1,0 +1,26 @@
+# Exclude common files and directories
+.git
+.idea
+.vscode
+__pycache__
+
+# Exclude development-related files
+*.pyc
+*.pyo
+
+# Exclude local virtual environment files
+venv/
+env/
+*.log
+data/
+AudioCLIP/
+
+*.wav
+*.npy
+
+# Exclude build artifacts
+*.log
+*.json
+*.xml
+
+# Exclude any other files or directories that are not needed in the image
