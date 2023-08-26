@@ -523,13 +523,18 @@ class ConvTransformerBackbone_StemOnly(nn.Module):
         # self.use_abs_pe = False,    # use absolute position embedding
         # self.use_rel_pe = False,    # use relative position embedding
         # self.path_pretrained=None,
-       
+        freezed = True 
         if( path_pretrained is not None):
             try:
                 print("Loading pretrained af model...")
                 self.model = make_meta_arch( cfg['model_name'], **cfg['model'])
                 checkpoint = torch.load(path_pretrained, map_location='cuda:0')
+                self.model.load_state_dict(checkpoint['state_dict_ema'])
                 print("Model weights {} loaded successfully".format(path_pretrained))
+                if freezed:
+                    print("Freezing pretrained AFormer model")
+                    for param in self.model.parameters():
+                        param.requires_grad = False
             except:
                 print("Could not load pretrained af model")
                 print("")
@@ -538,31 +543,6 @@ class ConvTransformerBackbone_StemOnly(nn.Module):
             for key in list(checkpoint['state_dict_ema'].keys()):
                 key_name = key.replace("module.", "")
                 checkpoint['state_dict_ema'][key_name] = checkpoint['state_dict_ema'].pop(key)
-                
-            self.model.load_state_dict(checkpoint['state_dict_ema'])
-            
-            # print(self.model.stem)
-            
-            if 1==2:
-                # TODO: FIX THIS!!!
-                #  B, C, T 
-                video_list =  [
-                    {
-                        'video_id': 'video_validation_0000155',
-                        'feats': torch.rand((2048, 10)),  # Random tensor of size C x T
-                        'segments': torch.tensor([[265.0, 337.0]]),
-                        'labels': torch.tensor([3]),
-                        'fps': 30.0,
-                        'prompt': 'CleanAndJerk',
-                        'audio_track': torch.rand((128, 10), dtype=torch.float64),  # Random tensor of size A x T (audio track)
-                        'duration': 75.54,
-                        'active_label': 3,
-                        'feat_stride': 4,
-                        'feat_num_frames': 16
-                    }]
-                self.model.eval()
-                y = self.model(video_list)  
-                make_dot(y['cls_loss'], params=self.model.named_parameters())
                 
         else:
              # init weights
