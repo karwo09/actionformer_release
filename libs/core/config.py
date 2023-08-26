@@ -159,3 +159,64 @@ def load_config(config_file, defaults=DEFAULTS):
     _merge(defaults, config)
     config = _update_config(config)
     return config
+
+cfg = {
+            'model_name': 'LocPointTransformer',
+            'model': {
+                'backbone_type': 'convTransformer',
+                'fpn_type': 'identity',
+                'backbone_arch': (2, 2, 5, 0, 0),
+                'scale_factor': 2,
+                'regression_range': [(0, 4), (4, 8), (8, 16), (16, 32), (32, 64), (64, 10000)],
+                'n_head': 4,
+                'n_mha_win_size': 19,
+                'embd_kernel_size': 3,
+                'embd_dim': 512,
+                'embd_with_ln': True,
+                'fpn_dim': 512,
+                'fpn_with_ln': True,
+                'fpn_start_level': 0,
+                'head_dim': 512,
+                'head_kernel_size': 3,
+                'head_num_layers': 3,
+                'head_with_ln': True,
+                'max_buffer_len_factor': 6.0,
+                'use_abs_pe': False,
+                'use_rel_pe': False,
+                'max_seq_len': 2304,
+                'num_classes': 20,
+                'input_dim': 2048,
+                'train_cfg': {
+                    "center_sample": "radius",
+                    "center_sample_radius": 1.5,
+                    "loss_weight": 1.0,
+                    "cls_prior_prob": 0.01,
+                    "init_loss_norm": 100,
+                    "clip_grad_l2norm": 1.0,
+                    "head_empty_cls": [],
+                    "dropout": 0.0,
+                    "droppath": 0.1,
+                    "label_smoothing": 0.0
+                },
+                'test_cfg': {
+                    'voting_thresh': 0.7,
+                    'pre_nms_topk': 2000,
+                    'max_seg_num': 200,
+                    'min_score': 0.001,
+                    'multiclass_nms': True,
+                    "pre_nms_thresh": 0.001,
+                    "iou_threshold": 0.1,
+                    "nms_method": 'soft',
+                    "nms_sigma": 0.5,
+                    "duration_thresh": 0.05,
+                    "ext_score_file": None
+                }
+            },
+            'training': {
+                'learning_rate': 0.0001,
+                'epochs': 30,
+                'weight_decay': 0.05,
+                'batch_size': 2
+            },
+        }
+

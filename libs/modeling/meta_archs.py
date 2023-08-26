@@ -405,7 +405,7 @@ class PtTransformer(nn.Module):
                     'use_rel_pe' : use_rel_pe,
                     'use_text' : self.use_text,
                     'use_audio' : self.use_audio,
-                    'aformer_path' : train_cfg['aformer_path'],
+                    'aformer_path' : train_cfg.get('aformer_path'),
                     'freeze_aformer' : train_cfg['freeze_aformer'],
                 }
             )
@@ -664,11 +664,17 @@ class PtTransformer(nn.Module):
             batched_video_inputs = video_feats[0].new_full(video_batch_shape, padding_val)
             if self.use_audio:
                 batched_audio_inputs = audio_feats[0].new_full(audio_batch_shape, padding_val)
-            for video_feat, pad_video_feat, audio_feat, pad_audio_feat  in zip(video_feats, batched_video_inputs, audio_feats, batched_audio_inputs):
-                pad_video_feat[..., :video_feat.shape[-1]].copy_(video_feat)
-                if self.use_audio:
+            
+            if self.use_audio:
+                for video_feat, pad_video_feat, audio_feat, pad_audio_feat  in zip(video_feats, batched_video_inputs, audio_feats, batched_audio_inputs):
                     _x = audio_feat.shape[0] if audio_feat.shape[0] < self.max_seq_len else self.max_seq_len
                     pad_audio_feat[:_x].copy_(audio_feat[:_x])
+                    
+            for video_feat, pad_video_feat  in zip(video_feats, batched_video_inputs):
+                pad_video_feat[..., :video_feat.shape[-1]].copy_(video_feat)
+            
+            
+                
                 
         else:
             assert len(video_list) == 1, "Only support batch_size = 1 during inference"
@@ -680,7 +686,8 @@ class PtTransformer(nn.Module):
                 stride = self.max_div_factor
                 video_max_len = (video_max_len + (stride - 1)) // stride * stride
             padding_size_v = [0, video_max_len - video_feats_lens[0]]
-            padding_size_a = [0,video_max_len - audio_lens[0]]
+            if self.use_audio:
+                padding_size_a = [0,video_max_len - audio_lens[0]]
             batched_video_inputs = F.pad(
                 video_feats[0], padding_size_v, value=padding_val).unsqueeze(0)
             if self.use_audio:
@@ -690,10 +697,11 @@ class PtTransformer(nn.Module):
 
         # generate the mask
         batched_masks = torch.arange(video_max_len)[None, :] < video_feats_lens[:, None]
-        batched_audio_inputs = batched_audio_inputs.transpose(1,2)
-        tmp = torch.zeros((batched_audio_inputs.shape[0], batched_audio_inputs.shape[1], video_max_len))
-        tmp[:,:,:(np.min((batched_audio_inputs.shape[-1], video_max_len)))] = batched_audio_inputs[:,:,:(np.min((batched_audio_inputs.shape[-1], video_max_len)))]
-        batched_audio_inputs = tmp
+        if self.use_audio:
+            batched_audio_inputs = batched_audio_inputs.transpose(1,2)
+            tmp = torch.zeros((batched_audio_inputs.shape[0], batched_audio_inputs.shape[1], video_max_len))
+            tmp[:,:,:(np.min((batched_audio_inputs.shape[-1], video_max_len)))] = batched_audio_inputs[:,:,:(np.min((batched_audio_inputs.shape[-1], video_max_len)))]
+            batched_audio_inputs = tmp
 
         # push to device
         batched_video_inputs = batched_video_inputs.to(self.device)
@@ -951,7 +959,7 @@ class PtTransformer(nn.Module):
             results.append(results_per_vid)
 
         # step 3: postprocssing
-        results = self.postprocessing(results)
+        results = self.postprocessingAVF(results)
 
         return results
 
@@ -1023,7 +1031,7 @@ class PtTransformer(nn.Module):
         return results
 
     @torch.no_grad()
-    def postprocessing(self, results):
+    def postprocessingAVF(self, results):
         # input : list of dictionary items
         # (1) push to CPU; (2) NMS; (3) convert to actual time stamps
         processed_results = []
@@ -1066,3 +1074,43 @@ class PtTransformer(nn.Module):
             )
 
         return processed_results
+@torch.no_grad()
+def preprocessing(self, video_list, padding_val=0.0):
+    """
+        Generate batched features and masks from a list of dict items
+    """
+    feats = [x['feats'] for x in video_list]
+    feats_lens = torch.as_tensor([feat.shape[-1] for feat in feats])
+    max_len = feats_lens.max(0).values.item()
+
+    if self.training:
+        assert max_len <= self.max_seq_len, "Input length must be smaller than max_seq_len during training"
+        # set max_len to self.max_seq_len
+        max_len = self.max_seq_len
+        # batch input shape B, C, T
+        batch_shape = [len(feats), feats[0].shape[0], max_len]
+        batched_inputs = feats[0].new_full(batch_shape, padding_val)
+        for feat, pad_feat in zip(feats, batched_inputs):
+            pad_feat[..., :feat.shape[-1]].copy_(feat)
+    else:
+        assert len(video_list) == 1, "Only support batch_size = 1 during inference"
+        # input length < self.max_seq_len, pad to max_seq_len
+        if max_len <= self.max_seq_len:
+            max_len = self.max_seq_len
+        else:
+            # pad the input to the next divisible size
+            stride = self.max_div_factor
+            max_len = (max_len + (stride - 1)) // stride * stride
+        padding_size = [0, max_len - feats_lens[0]]
+        batched_inputs = F.pad(
+            feats[0], padding_size, value=padding_val).unsqueeze(0)
+
+    # generate the mask
+    batched_masks = torch.arange(max_len)[None, :] < feats_lens[:, None]
+
+    # push to device
+    batched_inputs = batched_inputs.to(self.device)
+    batched_masks = batched_masks.unsqueeze(1).to(self.device)
+
+    return batched_inputs, batched_masks
+
