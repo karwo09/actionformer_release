@@ -529,6 +529,9 @@ class ConvTransformerBackbone_StemOnly(nn.Module):
                 print("Loading pretrained af model...")
                 self.model = make_meta_arch( cfg['model_name'], **cfg['model'])
                 checkpoint = torch.load(path_pretrained, map_location='cuda:0')
+                for key in list(checkpoint['state_dict_ema'].keys()):
+                    key_name = key.replace("module.", "")
+                    checkpoint['state_dict_ema'][key_name] = checkpoint['state_dict_ema'].pop(key)
                 self.model.load_state_dict(checkpoint['state_dict_ema'])
                 print("Model weights {} loaded successfully".format(path_pretrained))
                 if freezed:
@@ -540,9 +543,7 @@ class ConvTransformerBackbone_StemOnly(nn.Module):
                 print("")
                 pass
             
-            for key in list(checkpoint['state_dict_ema'].keys()):
-                key_name = key.replace("module.", "")
-                checkpoint['state_dict_ema'][key_name] = checkpoint['state_dict_ema'].pop(key)
+            
                 
         else:
              # init weights
@@ -655,7 +656,7 @@ class AVFusionConvTransformerBackbone(nn.Module):
         self.n_fusion_layers = arch[3]
         # stem network using (vanilla) transformer
         # self.bottle_neck = BottleNeckAudioVideo(self.n_fusion_layers, d_size=n_embd//2, out_size=512)
-        self.bottle_neck = BottleNeckAudioVideoRMAttn(out_size=512, in_size_video=n_embd, in_size_audio=self.audio_embed, stem_size=self.audio_embed)
+        self.bottle_neck = BottleNeckAudioVideoRMAttn(out_size=512, in_size_video=n_embd, in_size_audio=self.audio_embed, stem_size=256)
 
         # main branch using transformer with pooling
         self.branch = nn.ModuleList()
