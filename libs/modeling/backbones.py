@@ -44,7 +44,7 @@ cfg = {
                     "init_loss_norm": 100,
                     "clip_grad_l2norm": 1.0,
                     "head_empty_cls": [],
-                    "dropout": 0.0,
+                    "dropout": 0.5,
                     "droppath": 0.1,
                     "label_smoothing": 0.0
                 },
@@ -136,7 +136,111 @@ class ProjectionHead(nn.Module):
 
 
         return self.layer_norm(x)
+    
+class BottleNeckConcatLinear(nn.Module):
+    def __init__(self, num_necks, d_size = 256, in_size_video=512, in_size_audio=128, out_size=512) -> None:
+        super().__init__()
+        self.num_layers = num_necks
+        
+        self.necks = nn.ModuleList()
+        self.activations = nn.ModuleList()
+        self.normalization = nn.ModuleList()
+        for i in range(num_necks):
+            self.normalization.append(nn.LayerNorm((in_size_video+in_size_audio)))
+            self.necks.append(nn.Linear(in_size_video+in_size_audio, d_size))
+            self.activations.append(nn.Tanh())
+            
+        
+    def forward(self,branches_video, branches_audio, mask) -> torch.Tensor:
+        
+        outs_list = []
+        for i in range(self.num_layers):
+            em_vid = branches_video[i].transpose(1,2)
+            em_aud = branches_audio[i].transpose(1,2)
+            cat = torch.cat((em_vid, em_aud), dim=-1)
+            x = self.normalization[i](cat)
+            x = self.necks[i](x)
+            x = self.activations[i](x).transpose(1,2)
+            
+            outs_list.append(x)
+            i += 1
+            
+        return outs_list
 
+class BottleNeckConcatConv(nn.Module):
+    def __init__(self, num_necks, d_size = 256, in_size_video=512, in_size_audio=128, out_size=512, kernel_size=19) -> None:
+        super().__init__()
+        assert kernel_size % 2 == 1, "kernel size must be odd"
+        self.num_layers = num_necks
+        
+        self.necks = nn.ModuleList()
+        self.activations = nn.ModuleList()
+        self.normalization = nn.ModuleList()
+        for i in range(num_necks):
+            self.normalization.append(nn.LayerNorm((in_size_video+in_size_audio,)))
+            self.necks.append(nn.Conv1d(in_size_video+in_size_audio, d_size, kernel_size, padding=(kernel_size-1)//2))
+            self.activations.append(nn.Tanh())
+        
+    def forward(self,branches_video, branches_audio, mask) -> torch.Tensor:
+    
+        outs_list = []
+        for i in range(self.num_layers):
+            em_vid = branches_video[i]
+            em_aud = branches_audio[i]
+            cat = torch.cat((em_vid, em_aud), dim=1)
+            x = self.normalization[i](cat.transpose(1,2)).transpose(1,2)
+            x = self.necks[i](x)
+            x = self.activations[i](x)
+            
+            outs_list.append(x)
+            
+        return outs_list
+    
+
+'''
+TODO: Not implemented yet
+'''
+class BottleNeckTransformer(nn.Module):
+    def __init__(self, num_necks, d_size = 256, in_size_video=512, in_size_audio=128, out_size=512, kernel_size=19) -> None:
+        super().__init__()
+        assert kernel_size % 2 == 1, "kernel size must be odd"
+        self.num_layers = num_necks
+        
+        self.convs = nn.ModuleList()
+        self.transforms = nn.ModuleList()
+        self.activations = nn.ModuleList()
+        self.normalizationV = nn.ModuleList()
+        self.normalizationA = nn.ModuleList()
+        for i in range(num_necks):
+            self.normalizationV.append(nn.LayerNorm((in_size_video,)))
+            self.normalizationA.append(nn.LayerNorm((in_size_audio,)))
+            self.convs.append(nn.Conv1d(in_size_video+in_size_audio, d_size, kernel_size, padding=(kernel_size-1)//2))
+            self.transforms.append(TransformerBlock(
+                    d_size, 8,
+                    n_ds_strides=(1, 1),
+                    attn_pdrop=0.5,
+                    proj_pdrop=0.5,
+                    # mha_win_size=-1,
+                ))
+                
+            self.activations.append(nn.Tanh())
+        
+    def forward(self,branches_video, branches_audio, masks) -> torch.Tensor:
+        
+        outs_list = []
+        for i in range(self.num_layers):
+            em_vid = branches_video[i]
+            em_aud = branches_audio[i]
+            # cat = torch.cat((em_vid, em_aud), dim=1)
+            em_vid = self.normalizationV[i](em_vid.transpose(1,2)).transpose(1,2)
+            em_aud = self.normalizationA[i](em_aud.transpose(1,2)).transpose(1,2)
+            # x = self.convs[i](x)
+            x, _ = self.transforms[i](em_vid,masks[i], text=em_aud, cross_attn=True)
+            x = self.activations[i](x)
+            
+            outs_list.append(x)
+            
+        return outs_list
 
 
 class BottleNeckAudioVideo(nn.Module):
@@ -490,6 +594,7 @@ class ConvTransformerBackbone_StemOnly(nn.Module):
         use_abs_pe = False,    # use absolute position embedding
         use_rel_pe = False,    # use relative position embedding
         path_pretrained=None,   # path to pretrained model
+        freeze=False,           # freeze pretrained model
     ):
         super().__init__(
         # n_in,                  # input feature dimension
@@ -523,11 +628,11 @@ class ConvTransformerBackbone_StemOnly(nn.Module):
         # self.use_abs_pe = False,    # use absolute position embedding
         # self.use_rel_pe = False,    # use relative position embedding
         # self.path_pretrained=None,
-        freezed = True 
+        freezed = freeze 
+        self.model = make_meta_arch( cfg['model_name'], **cfg['model'])
         if( path_pretrained is not None):
             try:
                 print("Loading pretrained af model...")
-                self.model = make_meta_arch( cfg['model_name'], **cfg['model'])
                 checkpoint = torch.load(path_pretrained, map_location='cuda:0')
                 for key in list(checkpoint['state_dict_ema'].keys()):
                     key_name = key.replace("module.", "")
@@ -544,16 +649,12 @@ class ConvTransformerBackbone_StemOnly(nn.Module):
                 pass
             
             
-                
-        else:
-             # init weights
-            self.model.apply(self.model.__init_weights__)
         # summary(self.model)
 
     def forward(self, x, mask):
-        x, mask, embeddings = self.model.backbone.forward_emb(x, mask)
+        out_feats, out_masks, embeddings = self.model.backbone(x, mask)
             
-        return x, mask, embeddings
+        return out_feats, out_masks, embeddings
 
 class ConvTransformerBackbone(ConvTransformerBackbone_StemOnly):
     
@@ -569,7 +670,6 @@ class ConvTransformerBackbone(ConvTransformerBackbone_StemOnly):
             out_masks += (mask, )
 
         return out_feats, out_masks
-
 
 @register_backbone("AVFusionConvTransformer")
 class AVFusionConvTransformerBackbone(nn.Module):
@@ -616,47 +716,59 @@ class AVFusionConvTransformerBackbone(nn.Module):
         if use_text:
             self.text_encoder = TextEncoder("openai/clip-vit-base-patch32", trainable=True)
             self.text_embedder = ProjectionHead(512, 512, 0.1)
-        elif use_audio:
-            self.video_stem = ConvTransformerBackbone_StemOnly(n_in,                  # input feature dimension
-                n_embd,                # embedding dimension (after convolution)
-                n_head,                # number of head for self-attention in transformers
-                n_embd_ks,             # conv kernel size of the embedding network
-                max_len,               # max sequence length
-                arch=arch[:3],      # (#convs, #video stem transformers, #branch transformers, #bottle neck transformers #audio stem)
-                mha_win_size = [-1]*6, # size of local window for mha
-                scale_factor = 2,      # dowsampling rate for the branch
-                with_ln = False,       # if to attach layernorm after conv
-                attn_pdrop = 0.0,      # dropout rate for the attention map
-                proj_pdrop = 0.0,      # dropout rate for the projection / MLP
-                path_pdrop = 0.0,      # droput rate for drop path
-                use_abs_pe = False,    # use absolute position embedding
-                use_rel_pe = False,    # use relative position embedding
-                path_pretrained=aformer_path
-            )
             
-        else:
-            raise ValueError("Must use either text or audio")
-            
+        self.video_backbone = ConvTransformerBackbone_StemOnly(n_in,                  # input feature dimension
+            n_embd,                # embedding dimension (after convolution)
+            n_head,                # number of head for self-attention in transformers
+            n_embd_ks,             # conv kernel size of the embedding network
+            max_len,               # max sequence length
+            arch=arch[:3],      # (#convs, #video stem transformers, #branch transformers, #bottle neck transformers #audio stem)
+            mha_win_size = [-1]*6, # size of local window for mha
+            scale_factor = 2,      # dowsampling rate for the branch
+            with_ln = False,       # if to attach layernorm after conv
+            attn_pdrop = 0.0,      # dropout rate for the attention map
+            proj_pdrop = 0.0,      # dropout rate for the projection / MLP
+            path_pdrop = 0.0,      # droput rate for drop path
+            use_abs_pe = False,    # use absolute position embedding
+            use_rel_pe = False,    # use relative position embedding
+            path_pretrained=aformer_path,
+            freeze=True
+        )
         
             
+        self.audio_encoder = ProjectionHead(128, 2048, 0.1)
+            
         # stem network using (vanilla) transformer
-        self.stem_audio = nn.ModuleList()
-        for idx in range(arch[4]):
-            self.stem_audio.append(
-                TransformerBlock(
-                    self.audio_embed, n_head,
-                    n_ds_strides=(1, 1),
-                    attn_pdrop=attn_pdrop,
-                    proj_pdrop=proj_pdrop,
-                    path_pdrop=path_pdrop,
-                    mha_win_size=self.mha_win_size[0],
-                    use_rel_pe=self.use_rel_pe
-                )
-            )
-        self.n_fusion_layers = arch[3]
-        # stem network using (vanilla) transformer
-        # self.bottle_neck = BottleNeckAudioVideo(self.n_fusion_layers, d_size=n_embd//2, out_size=512)
-        self.bottle_neck = BottleNeckAudioVideoRMAttn(out_size=512, in_size_video=n_embd, in_size_audio=self.audio_embed, stem_size=256)
+        # self.stem_audio = nn.ModuleList()
+        # for idx in range(arch[4]):
+        #     self.stem_audio.append(
+        #         TransformerBlock(
+        #             self.audio_embed, n_head,
+        #             n_ds_strides=(1, 1),
+        #             attn_pdrop=attn_pdrop,
+        #             proj_pdrop=proj_pdrop,
+        #             path_pdrop=path_pdrop,
+        #             mha_win_size=self.mha_win_size[0],
+        #             use_rel_pe=self.use_rel_pe
+        #         )
+        #     )
+        self.audio_backbone = ConvTransformerBackbone_StemOnly(n_in,                  # input feature dimension
+            self.audio_embed,                # embedding dimension (after convolution)
+            n_head,                # number of head for self-attention in transformers
+            19,             # conv kernel size of the embedding network
+            max_len,               # max sequence length
+            arch=(arch[0], arch[-1], arch[2]),      # (#convs, #video stem transformers, #branch transformers, #bottle neck transformers #audio stem)
+            mha_win_size = [-1]*6, # size of local window for mha
+            scale_factor = 2,      # dowsampling rate for the branch
+            with_ln = False,       # if to attach layernorm after conv
+            attn_pdrop = 0.0,      # dropout rate for the attention map
+            proj_pdrop = 0.0,      # dropout rate for the projection / MLP
+            path_pdrop = 0.0,      # droput rate for drop path
+            use_abs_pe = False,    # use absolute position embedding
+            use_rel_pe = False,    # use relative position embedding
+            path_pretrained=None,
+            freeze=False
+        )
 
         # main branch using transformer with pooling
         self.branch = nn.ModuleList()
@@ -672,6 +784,10 @@ class AVFusionConvTransformerBackbone(nn.Module):
                     use_rel_pe=self.use_rel_pe
                 )
             )
+        self.n_fusion_layers = arch[3]
+        # self.bottle_neck = BottleNeckAudioVideo(self.n_fusion_layers, d_size=n_embd//2, out_size=512, in_size_audio=self.audio_embed)
+        # self.bottle_neck = BottleNeckAudioVideoRMAttn(out_size=512, in_size_video=n_embd, in_size_audio=self.audio_embed, stem_size=128 )
+        self.branch_fusion = BottleNeckTransformer(arch[2]+1, n_embd, 512, 512, 512)
 
         # init weights
         self.apply(self.__init_weights__)
@@ -702,42 +818,53 @@ class AVFusionConvTransformerBackbone(nn.Module):
                 x_audio = x_video
             
         B, C, T = x_video.size()
-        outs_audio = []
         
         # stem transformer
         if self.use_text:
             raise NotImplementedError("text embedding not implemented")
-        else:
-            # Use audio
-            x_video, mask_video, outs_video = self.video_stem(x_video, mask_video)
+        
+        video_out_feats, video_out_masks, video_embeddings = self.video_backbone(x_video, mask_video)
+        
+        x_audio = self.audio_encoder(x_audio)
+        x_audio = x_audio.transpose(1,2)
+        audio_out_feats, audio_out_masks, audio_embeddings = self.audio_backbone(x_audio, mask_video)
         
         # Filter out the layers we want to fuse
-        tmp = []
-        for idx in range(len(outs_video)):
-            if(len(outs_video) - idx <= self.n_fusion_layers):
-                tmp.append(x_video)
-        outs_video = tmp
+        # tmp = []
+        # for idx in range(len(outs_video)):
+        #     if(len(outs_video) - idx <= self.n_fusion_layers):
+        #         tmp.append(x_video)
+        # outs_video = tmp
         
-        for idx in range(len(self.stem_audio)):
-            x_audio, mask_audio = self.stem_audio[idx](x_audio, mask_video)
-            if(len(self.stem_audio) - idx <= self.n_fusion_layers):
-                outs_audio.append(x_audio)
+        # tmp = []
+        # for idx in range(len(outs_audio)):
+        #     if(len(outs_audio) - idx <= self.n_fusion_layers):
+        #         tmp.append(x_audio)
+        # outs_audio = tmp
+        
+        # outs_audio = []
+        # for idx in range(len(self.stem_audio)):
+        #     x_audio, mask_audio = self.stem_audio[idx](x_audio, mask_video)
+        #     if(len(self.stem_audio) - idx <= self.n_fusion_layers):
+        #         outs_audio.append(x_audio)
                 
         
                 
-        x = self.bottle_neck(outs_video, outs_audio, mask_video)
+        # x = self.bottle_neck(outs_video, outs_audio, mask_video)
 
         # prep for outputs
-        out_feats = (x, )
-        out_masks = (mask_video, )
+        # out_feats = (x, )
+        # out_masks = (mask_video, )
 
-        # main branch with downsampling
-        for idx in range(len(self.branch)):
-            x, mask_video = self.branch[idx](x, mask_video)
-            out_feats += (x, )
-            out_masks += (mask_video, )
+        # # main branch with downsampling
+        # for idx in range(len(self.branch)):
+        #     x, mask_video = self.branch[idx](x, mask_video)
+        #     out_feats += (x, )
+        #     out_masks += (mask_video, )
+        
+        out_feats = self.branch_fusion(video_out_feats, audio_out_feats, audio_out_masks)
 
-        return out_feats, out_masks
+        return out_feats, video_out_masks
 
 
 @register_backbone("conv")

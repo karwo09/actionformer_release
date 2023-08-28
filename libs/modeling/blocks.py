@@ -676,6 +676,7 @@ class TransformerBlock(nn.Module):
         # layer norm for order (B C T)
         self.ln1 = LayerNorm(n_embd)
         self.ln2 = LayerNorm(n_embd)
+        self.ln3 = LayerNorm(n_embd)
 
         # specify the attention module
         if mha_win_size > 1:
@@ -734,7 +735,7 @@ class TransformerBlock(nn.Module):
         # pre-LN transformer: https://arxiv.org/pdf/2002.04745.pdf
         if text is not None and cross_attn:
             # text = text.transpose(1, 2)
-            out, out_mask = self.attn(self.ln1(x), mask, text)
+            out, out_mask = self.attn(self.ln1(x), mask, self.ln2(text))
         else:
             if x.shape[-1] != mask.shape[-1]:
                 x = x.transpose(1, 2)
@@ -742,7 +743,7 @@ class TransformerBlock(nn.Module):
         out_mask_float = out_mask.to(out.dtype)
         out = self.pool_skip(x) * out_mask_float + self.drop_path_attn(out)
         # FFN
-        out = out + self.drop_path_mlp(self.mlp(self.ln2(out)) * out_mask_float)
+        out = out + self.drop_path_mlp(self.mlp(self.ln3(out)) * out_mask_float)
         # optionally add pos_embd to the output
         if pos_embd is not None:
             out += pos_embd * out_mask_float
