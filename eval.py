@@ -139,8 +139,8 @@ if __name__ == '__main__':
         args = parser.parse_args()
     except:
         class Args:
-            ckpt = "./ckpt/thumos_TSF_reproduce"
-            config = "./configs/thumos_TSF.yaml"
+            ckpt = "./ckpt/thumos_VGGish_reproduce"
+            config = "./configs/thumos_VGGish.yaml"
             epoch = -1
             topk = -1
             saveonly = False
