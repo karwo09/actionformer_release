@@ -35,7 +35,7 @@ train_cfg: {
   cls_prior_prob: 0.01,
   center_sample: radius,
   center_sample_radius: 1.5,
-  dropout: 0.2,
+  dropout: 0.5,
   use_text: False,
   use_audio: True,
   aformer_path: /home/karolwojtulewicz/code/actionformer_release/pretrained/thumos_i3d_reproduce/epoch_034.pth.tar,

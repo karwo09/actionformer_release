@@ -19,7 +19,7 @@ model: {
   fpn_type: identity,
   max_buffer_len_factor: 6.0,
   n_mha_win_size: 19,
-  backbone_arch: (2, 2, 5),
+  backbone_arch: [2, 2, 5,0 ,0],
 }
 opt: {
   learning_rate: 0.0001,

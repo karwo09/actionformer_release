@@ -521,7 +521,7 @@ class PtTransformer(nn.Module):
             
             feats, masks = self.backbone(batched_video_inputs, batched_masks, batched_audio_inputs, cross_attn=cross_attn)
         else:
-            feats, masks = self.backbone(batched_video_inputs, batched_masks)
+            feats, masks, _ = self.backbone(batched_video_inputs, batched_masks)
         fpn_feats, fpn_masks = self.neck(feats, masks)
 
         # compute the point coordinate along the FPN
@@ -551,16 +551,16 @@ class PtTransformer(nn.Module):
         # generate segment/lable List[N x 2] / List[N] with length = B
         assert video_list[0]['segments'] is not None, "GT action labels does not exist"
         assert video_list[0]['labels'] is not None, "GT action labels does not exist"
-        assert video_list[0]['prompt'] is not None, "Prompts do not exist"
+        # assert video_list[0]['prompt'] is not None, "Prompts do not exist"
         # assert video_list[0]['active_label'] is not None, "GT action labels does not exist"
         gt_segments = [x['segments'].to(self.device) for x in video_list]
         gt_labels = [x['labels'].to(self.device) for x in video_list]
-        gt_activations = [x['active_label'] for x in video_list]
+        # gt_activations = [x['active_label'] for x in video_list]
 
         # compute the gt labels for cls & reg
         # list of prediction targets
         gt_cls_labels, gt_offsets, gt_activation_labels = self.label_points(
-            points, gt_segments, gt_labels, gt_activations)
+            points, gt_segments, gt_labels, gt_labels)
         if self.training:
 
             # compute the loss and return
@@ -633,7 +633,8 @@ class PtTransformer(nn.Module):
         
         
         video_feats = [x['feats'] for x in video_list]
-        audio_feats = [x['audio_track'] for x in video_list]
+        if(self.use_audio):
+            audio_feats = [x['audio_track'] for x in video_list]
         
         # get video info
         video_feats_lens = torch.as_tensor([feat.shape[-1] for feat in video_feats])

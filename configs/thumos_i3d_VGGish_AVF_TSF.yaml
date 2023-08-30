@@ -1,35 +1,32 @@
-dataset_name: thumos
+dataset_name: thumos_AVF_TSF
 train_split: ['validation']
 val_split: ['test']
 dataset: {
   json_file: ./data/thumos/annotations/thumos14.json,
   feat_folder: ./data/thumos/TSF_features,
+  audio_folder: ./data/thumos/i3d_features,
   file_prefix: ~,
   file_ext: .npy,
   num_classes: 20,
   input_dim: 768,
-  feat_stride: 8,
-  num_frames: 8,
-  default_fps: 30,
+  feat_stride: 4,
+  num_frames: 16,
   # serve as data augmentation
   trunc_thresh: 0.5,
   crop_ratio: [0.9, 1.0],
-  max_seq_len: 1152,
-  # max_seq_len: 2304,
+  max_seq_len: 2304,
 }
 model: {
-  # embd_dim: 768,
   fpn_type: identity,
+  backbone_type: 'AVFusionConvTransformer',
   max_buffer_len_factor: 6.0,
+  # n_mha_win_size: -1,
   n_mha_win_size: 19,
-  # embd_with_ln: True,
-  backbone_arch: [2, 2, 5,0 ,0],
-  # use_abs_pe: True,
 }
 opt: {
-  learning_rate: 0.00001,
-  epochs: 30,
-  weight_decay: 0.001,
+  learning_rate: 0.0001,
+  epochs: 35,
+  weight_decay: 0.01,
 }
 loader: {
   batch_size: 2,
@@ -40,6 +37,11 @@ train_cfg: {
   cls_prior_prob: 0.01,
   center_sample: radius,
   center_sample_radius: 1.5,
+  dropout: 0.5,
+  use_text: False,
+  use_audio: True,
+  # aformer_path: /home/karolwojtulewicz/code/actionformer_release/pretrained/thumos_i3d_reproduce/epoch_034.pth.tar,
+  freeze_aformer: True,
 }
 test_cfg: {
   voting_thresh: 0.7,

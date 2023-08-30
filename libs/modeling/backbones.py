@@ -35,7 +35,7 @@ cfg = {
                 'use_rel_pe': False,
                 'max_seq_len': 2304,
                 'num_classes': 20,
-                'input_dim': 2048,
+                'input_dim': 768,
                 'train_cfg': {
                     "center_sample": "radius",
                     "center_sample_radius": 1.5,
@@ -232,8 +232,8 @@ class BottleNeckTransformer(nn.Module):
             em_vid = branches_video[i]
             em_aud = branches_audio[i]
             # cat = torch.cat((em_vid, em_aud), dim=1)
-            em_vid = self.normalizationV[i](em_vid.transpose(1,2)).transpose(1,2)
-            em_aud = self.normalizationA[i](em_aud.transpose(1,2)).transpose(1,2)
+            # em_vid = self.normalizationV[i](em_vid.transpose(1,2)).transpose(1,2)
+            # em_aud = self.normalizationA[i](em_aud.transpose(1,2)).transpose(1,2)
             # x = self.convs[i](x)
             x, _ = self.transforms[i](em_vid,masks[i], text=em_aud, cross_attn=True)
             x = self.activations[i](x)
@@ -644,7 +644,7 @@ class ConvTransformerBackbone_StemOnly(nn.Module):
                     for param in self.model.parameters():
                         param.requires_grad = False
             except:
-                print("Could not load pretrained af model")
+                print("Could not load entire pretrained af model")
                 print("")
                 pass
             
@@ -711,7 +711,7 @@ class AVFusionConvTransformerBackbone(nn.Module):
         self.use_rel_pe = use_rel_pe
         self.use_text = use_text
         self.use_audio = use_audio
-        self.audio_embed = 128
+        self.audio_embed = 512
         
         if use_text:
             self.text_encoder = TextEncoder("openai/clip-vit-base-patch32", trainable=True)
@@ -732,11 +732,11 @@ class AVFusionConvTransformerBackbone(nn.Module):
             use_abs_pe = False,    # use absolute position embedding
             use_rel_pe = False,    # use relative position embedding
             path_pretrained=aformer_path,
-            freeze=True
+            freeze=False
         )
         
             
-        self.audio_encoder = ProjectionHead(128, 2048, 0.1)
+        self.audio_encoder = ProjectionHead(128, 768, 0.1)
             
         # stem network using (vanilla) transformer
         # self.stem_audio = nn.ModuleList()
@@ -766,7 +766,7 @@ class AVFusionConvTransformerBackbone(nn.Module):
             path_pdrop = 0.0,      # droput rate for drop path
             use_abs_pe = False,    # use absolute position embedding
             use_rel_pe = False,    # use relative position embedding
-            path_pretrained=None,
+            path_pretrained=aformer_path,
             freeze=False
         )
 

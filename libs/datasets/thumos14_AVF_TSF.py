@@ -1,4 +1,6 @@
 import os
+import librosa
+import random
 import json
 import numpy as np
 
@@ -8,14 +10,16 @@ from torch.nn import functional as F
 
 from .datasets import register_dataset
 from .data_utils import truncate_feats
+from numpy.lib.stride_tricks import as_strided
 
-@register_dataset("thumos")
-class THUMOS14Dataset(Dataset):
+@register_dataset("thumos_AVF_TSF")
+class THUMOS14CLIPDataset(Dataset):
     def __init__(
         self,
         is_training,     # if in training mode
         split,           # split, a tuple/list allowing concat of subsets
         feat_folder,     # folder for features
+        audio_folder,    # folder for audio
         json_file,       # json file for annotations
         feat_stride,     # temporal stride of the feats
         num_frames,      # number of frames for each feat
@@ -35,6 +39,7 @@ class THUMOS14Dataset(Dataset):
         assert isinstance(split, tuple) or isinstance(split, list)
         assert crop_ratio == None or len(crop_ratio) == 2
         self.feat_folder = feat_folder
+        self.audio_folder = audio_folder
         if file_prefix is not None:
             self.file_prefix = file_prefix
         else:
@@ -57,6 +62,13 @@ class THUMOS14Dataset(Dataset):
         self.num_classes = num_classes
         self.label_dict = None
         self.crop_ratio = crop_ratio
+        
+        # audio
+        # self.SAMPLE_RATE = 16000 # 16kHz as per https://arxiv.org/abs/2106.14118
+        
+        #TODO: Need to check if AudioCLIP can consume less VRAM
+        self.SAMPLE_RATE = 4198 # 2kHz to match the video frame rate
+        self.audio_extention = '.csv'
 
         # load database and select the subset
         dict_db, label_dict = self._load_json_db(self.json_file)
@@ -66,7 +78,7 @@ class THUMOS14Dataset(Dataset):
 
         # dataset specific attributes
         self.db_attributes = {
-            'dataset_name': 'thumos-14',
+            'dataset_name': 'thumos-14-clip',
             'tiou_thresholds': np.linspace(0.3, 0.7, 5),
             # we will mask out cliff diving
             'empty_label_ids': [],
@@ -128,13 +140,15 @@ class THUMOS14Dataset(Dataset):
             else:
                 segments = None
                 labels = None
+            active_label = value['annotations'][0]['label']
             dict_db += ({'id': key,
                          'fps' : fps,
                          'duration' : duration,
                          'segments' : segments,
-                         'labels' : labels
+                         'labels' : labels,
+                         'active_label' : label_dict[active_label]
             }, )
-
+        self.label_dict = label_dict
         return dict_db, label_dict
 
     def __len__(self):
@@ -150,17 +164,44 @@ class THUMOS14Dataset(Dataset):
         filename = os.path.join(self.feat_folder,
                                 self.file_prefix + video_item['id'] + self.file_ext)
         feats = np.load(filename).astype(np.float32)
+        
+        # Load audio:
+        # Divide by current fps and multiply by original 30fps then the stride is 4 and padding is 2 on each side
+        # (T_a/16*30/4)-4 gives the amount of feats in the video -4 indicates padding with zeros probably
+        # This can be fixed with strides:
+        # (T- T/2 - T/32)-4, stride of 2 and a stride of 32 and padding of 2 on each side
+        if(self.audio_folder):
+            audio_filename = os.path.join(self.audio_folder,
+                                    self.file_prefix + video_item['id'] + self.audio_extention)
+            track = np.genfromtxt(audio_filename, delimiter=",")
+        else:
+            # Using default audio folder
+            audio_filename = os.path.join(self.feat_folder,
+                                    self.file_prefix + video_item['id'] + self.audio_extention)
+        track = np.genfromtxt(audio_filename, delimiter=",") # (T, 128)
+        # track, _ = librosa.load(audio_filename, sr=self.SAMPLE_RATE, dtype=np.float32)
 
         # deal with downsampling (= increased feat stride)
         feats = feats[::self.downsample_rate, :]
+        
+        # this is the downsampling rate for the audio shown above
+        # df1 = df [df.index % 3 != 0] 
+        # Excludes every 3rd row starting from 0 df2 = df [df.index % 3 == 0] 
+        # Selects every 3rd raw starting from 0.
+        # Create a mask for the strides:
+        T = track.shape[0]
+        x = (T - T//2 - T//32) - 4
+        new_shape = (track.shape[0]//x, x) + track.shape[1:]
+        new_strides = (x*track.strides[0],) + track.strides
+        track = as_strided(track, shape=new_shape, strides=new_strides)
+        if len(track.shape) == 3:
+            track = np.mean(track, axis=0)
         feat_stride = self.feat_stride * self.downsample_rate
         feat_offset = 0.5 * self.num_frames / feat_stride
         # T x C -> C x T
         feats = torch.from_numpy(np.ascontiguousarray(feats.transpose()))
-        # feats -= feats.min()
-        # feats = feats / (feats.max() + 1e-8)
-        
-        feats = torch.sigmoid(feats)
+        # track = torch.from_numpy(np.ascontiguousarray(track.transpose()))
+        track = torch.from_numpy(track)
 
         # convert time stamp (in second) into temporal feature grids
         # ok to have small negative values here
@@ -169,16 +210,24 @@ class THUMOS14Dataset(Dataset):
                 video_item['segments'] * video_item['fps'] / feat_stride - feat_offset
             )
             labels = torch.from_numpy(video_item['labels'])
+            
         else:
             segments, labels = None, None
-
+        rand = random.randint(0,(len(video_item['labels'])-1))
+        activity = str([i for i in self.label_dict if self.label_dict[i]==video_item['labels'][int(rand)]][0])
+        if activity is None:
+            activity = 'Number ' +str(video_item['labels'][int(rand)])
         # return a data dict
         data_dict = {'video_id'        : video_item['id'],
                      'feats'           : feats,      # C x T
                      'segments'        : segments,   # N x 2
                      'labels'          : labels,     # N
                      'fps'             : video_item['fps'],
+                     'prompt'          : activity,
+                    #  'prompt'          : "A person doing " + activity + ".",
+                     'audio_track'     : track,
                      'duration'        : video_item['duration'],
+                     'active_label'    : video_item['labels'][int(rand)],
                      'feat_stride'     : feat_stride,
                      'feat_num_frames' : self.num_frames}
 
