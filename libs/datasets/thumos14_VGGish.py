@@ -157,14 +157,15 @@ class THUMOS14Dataset(Dataset):
         feat_stride = self.feat_stride * self.downsample_rate
         feat_offset = 0.5 * self.num_frames / feat_stride
         
-        T = feats.shape[0]
-        x = (T - T//2 - T//32) - 4
-        new_shape = (feats.shape[0]//x, x) + feats.shape[1:]
-        new_strides = (x*feats.strides[0],) + feats.strides
-        feats = as_strided(feats, shape=new_shape, strides=new_strides)
-        if len(feats.shape) == 3:
-            feats = np.mean(feats, axis=0)
-        # T x C -> C x T
+        # T = feats.shape[0]
+        # x = (T - T//2 - T//32) - 4
+        # new_shape = (feats.shape[0]//x, x) + feats.shape[1:]
+        # new_strides = (x*feats.strides[0],) + feats.strides
+        # feats = as_strided(feats, shape=new_shape, strides=new_strides)
+        # if len(feats.shape) == 3:
+        #     feats = np.mean(feats, axis=0)
+        # # T x C -> C x T
+        # feats = torch.sigmoid(feats)
         feats = torch.from_numpy(np.ascontiguousarray(feats.transpose()))
 
         # convert time stamp (in second) into temporal feature grids

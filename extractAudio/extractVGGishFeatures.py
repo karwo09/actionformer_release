@@ -52,7 +52,7 @@ parser.add_argument(
 
 # Returns feature sequence from audio 'filename'
 def getFeature(_filename, input_dir, output_dir,frames,snippet_size, vggmodel, sampling_rate=16000):
-    if(os.path.isfile(input_dir + '/' + _filename.split('.')[0] +".csv")):
+    if(os.path.isfile(output_dir + '/' + _filename.split('.')[0] +".csv")):
         print("File already exists: " + _filename)
         return 1
     try:
@@ -155,7 +155,9 @@ def main(args):
         raise Exception('No data found in annotations file')
     frames = {}
     for i in data:
-        frames[i] = int(data[i]['duration'] * feature_frame_size) # number of seconds * frames per second = tot number of frames
+        feat = np.load(input_dir + "/"+i +".npy").astype(np.float32)
+        feature_frame_size = feat.shape[0]
+        frames[i] = int(feature_frame_size) # number of seconds * frames per second = tot number of frames
     
 
 
@@ -171,10 +173,10 @@ if __name__ == '__main__':
     class Args:
         def __init__(self):
             self.input = 'data/thumos/i3d_features'
-            self.output = 'data/thumos/i3d_features'
+            self.output = 'data/thumos/VGGish'
             self.snippet_size = 1.2
             self.sampling_rate = 16000
-            self.feature_frame_size = 16
+            self.feature_frame_size = 8
             self.annotations = "data/thumos/annotations/thumos14.json"
         
     args = Args()
