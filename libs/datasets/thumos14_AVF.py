@@ -182,19 +182,19 @@ class THUMOS14CLIPDataset(Dataset):
         # Excludes every 3rd row starting from 0 df2 = df [df.index % 3 == 0] 
         # Selects every 3rd raw starting from 0.
         # Create a mask for the strides:
-        T = track.shape[0]
-        x = (T - T//2 - T//32) - 4
-        new_shape = (track.shape[0]//x, x) + track.shape[1:]
-        new_strides = (x*track.strides[0],) + track.strides
-        track = as_strided(track, shape=new_shape, strides=new_strides)
-        if len(track.shape) == 3:
-            track = np.mean(track, axis=0)
+        # T = track.shape[0]
+        # x = (T - T//2 - T//32) - 4
+        # new_shape = (track.shape[0]//x, x) + track.shape[1:]
+        # new_strides = (x*track.strides[0],) + track.strides
+        # track = as_strided(track, shape=new_shape, strides=new_strides)
+        # if len(track.shape) == 3:
+        #     track = np.mean(track, axis=0)
         feat_stride = self.feat_stride * self.downsample_rate
         feat_offset = 0.5 * self.num_frames / feat_stride
         # T x C -> C x T
         feats = torch.from_numpy(np.ascontiguousarray(feats.transpose()))
-        # track = torch.from_numpy(np.ascontiguousarray(track.transpose()))
-        track = torch.from_numpy(track)
+        track = torch.from_numpy(np.ascontiguousarray(track.transpose()))
+        # track = torch.from_numpy(track)
 
         # convert time stamp (in second) into temporal feature grids
         # ok to have small negative values here

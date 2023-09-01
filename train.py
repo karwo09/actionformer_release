@@ -185,7 +185,7 @@ if __name__ == '__main__':
     except:
         class Args:
             def __init__(self):
-                self.config = './configs/thumos_VGGish.yaml'
+                self.config = './configs/thumos_i3d_VGGish_AVF.yaml'
                 self.print_freq = 5
                 self.ckpt_freq = 5
                 self.output = 'reproduce'

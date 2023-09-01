@@ -105,13 +105,13 @@ def truncate_feats(
     # also do the timeline cropping for the audio track
     # first get the length of the audio track
     if (data_dict.get('audio_track') is not None):
-        audio_len = data_dict['audio_track'].shape[0]
+        audio_len = data_dict['audio_track'].shape[1]
         # then get the ratio of the audio track to the video track lengths
         audio_ratio = audio_len / feat_len
         st_int = int(st * audio_ratio)
         ed_int = int(ed * audio_ratio)
         # then crop the audio track
-        data_dict['audio_track'] = data_dict['audio_track'][st_int:ed_int]
+        data_dict['audio_track'] = data_dict['audio_track'][:,st_int:ed_int]
     
     # segments: N x 2 in feature grids
     data_dict['segments'] = torch.stack((left[seg_idx], right[seg_idx]), dim=1)

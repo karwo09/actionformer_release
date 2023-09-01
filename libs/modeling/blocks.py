@@ -669,14 +669,16 @@ class TransformerBlock(nn.Module):
         proj_pdrop=0.0,        # dropout rate for the projection / MLP
         path_pdrop=0.0,        # drop path rate
         mha_win_size=-1,       # > 0 to use window mha
-        use_rel_pe=False       # if to add rel position encoding to attention
+        use_rel_pe=False,       # if to add rel position encoding to attention
+        cross_attn=False,      # if to use cross attention
     ):
         super().__init__()
         assert len(n_ds_strides) == 2
         # layer norm for order (B C T)
         self.ln1 = LayerNorm(n_embd)
         self.ln2 = LayerNorm(n_embd)
-        self.ln3 = LayerNorm(n_embd)
+        if cross_attn:
+            self.ln3 = LayerNorm(n_embd)
 
         # specify the attention module
         if mha_win_size > 1:
@@ -731,11 +733,11 @@ class TransformerBlock(nn.Module):
             self.drop_path_attn = nn.Identity()
             self.drop_path_mlp = nn.Identity()
 
-    def forward(self, x, mask, pos_embd=None, text=None,cross_attn=False):
+    def forward(self, x, mask, pos_embd=None, kv=None,cross_attn=False):
         # pre-LN transformer: https://arxiv.org/pdf/2002.04745.pdf
-        if text is not None and cross_attn:
+        if kv is not None and cross_attn:
             # text = text.transpose(1, 2)
-            out, out_mask = self.attn(self.ln1(x), mask, self.ln2(text))
+            out, out_mask = self.attn(self.ln1(x), mask, self.ln3(kv))
         else:
             if x.shape[-1] != mask.shape[-1]:
                 x = x.transpose(1, 2)
@@ -743,7 +745,7 @@ class TransformerBlock(nn.Module):
         out_mask_float = out_mask.to(out.dtype)
         out = self.pool_skip(x) * out_mask_float + self.drop_path_attn(out)
         # FFN
-        out = out + self.drop_path_mlp(self.mlp(self.ln3(out)) * out_mask_float)
+        out = out + self.drop_path_mlp(self.mlp(self.ln2(out)) * out_mask_float)
         # optionally add pos_embd to the output
         if pos_embd is not None:
             out += pos_embd * out_mask_float

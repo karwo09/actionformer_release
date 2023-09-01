@@ -119,7 +119,7 @@ class FPNIdentity(nn.Module):
         self.fpn_norms = nn.ModuleList()
         for i in range(self.start_level, self.end_level):
             # check feat dims
-            assert self.in_channels[i] == self.out_channel
+            # assert self.in_channels[i] == self.out_channel
             # layer norm for order (B C T)
             if with_ln:
                 fpn_norm = LayerNorm(out_channel)

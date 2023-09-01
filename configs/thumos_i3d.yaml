@@ -18,7 +18,9 @@ dataset: {
 model: {
   fpn_type: identity,
   max_buffer_len_factor: 6.0,
+  fpn_with_ln: True,
   n_mha_win_size: 19,
+  embd_with_ln: True,
   backbone_arch: [2, 2, 5,0 ,0],
 }
 opt: {
