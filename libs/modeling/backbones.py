@@ -252,6 +252,60 @@ class BottleNeckConcatConv(nn.Module):
         return outs_list
     
 
+class BottleNeckCatTransformer(nn.Module):
+    def __init__(self, num_necks, d_size = 256, in_size_video=512, in_size_audio=128, out_size=512, kernel_size=19) -> None:
+        super().__init__()
+        assert kernel_size % 2 == 1, "kernel size must be odd"
+        self.num_layers = num_necks
+        
+        self.convs = nn.ModuleList()
+        self.transforms = nn.ModuleList()
+        self.activations = nn.ModuleList()
+        self.normalizationV = nn.ModuleList()
+        self.normalizationA = nn.ModuleList()
+        projv_f = 19
+        self.ln = nn.LayerNorm((in_size_video+in_size_audio,))
+        self.proj = nn.Sequential(
+            nn.Conv1d(in_size_video+in_size_audio, d_size, projv_f, padding=(projv_f - 1)//2),
+            nn.Tanh(),
+        )
+        for i in range(num_necks):
+            self.transforms.append(TransformerBlock(
+                    d_size, 8,
+                    n_ds_strides=(1, 1),
+                    attn_pdrop=0.1,
+                    proj_pdrop=0.1,
+                    cross_attn=True,
+                    # mha_win_size=-1,
+                ))
+                
+            self.activations.append(nn.Tanh())
+            self.out = nn.Conv1d(d_size, out_size, 1)
+            self.out_act = nn.GELU()
+        
+    def forward(self,branches_video, branches_audio, masks) -> torch.Tensor:
+        
+        outs_list = []
+        for i in range(self.num_layers):
+            em_vid = branches_video[i]
+            em_aud = branches_audio[i]
+            em_cat = torch.cat((em_vid, em_aud), dim=1)
+            em_cat = self.ln(em_cat.transpose(1,2)).transpose(1,2)
+            
+            em_cat = self.proj(em_cat)
+            # cat = torch.cat((em_vid, em_aud), dim=1)
+            # em_vid = self.normalizationV[i](em_vid.transpose(1,2)).transpose(1,2)
+            # em_aud = self.normalizationA[i](em_aud.transpose(1,2)).transpose(1,2)
+            # x = self.convs[i](x)
+            x, _ = self.transforms[i](em_cat,masks[i])
+            x = self.activations[i](x)
+            x = self.out(x)
+            x = self.out_act(x)
+            outs_list.append(x)
+            
+        return outs_list
+    
+
 '''
 TODO: Not implemented yet
 '''
@@ -958,9 +1012,9 @@ class AVFusionConvTransformerBackbone(nn.Module):
         # self.bottle_neck = BottleNeckAudioVideo(self.n_fusion_layers, d_size=n_embd//2, out_size=512, in_size_audio=self.audio_embed)
         # self.bottle_neck = BottleNeckAudioVideoRMAttnT(out_size=512, in_size_video=n_embd, in_size_audio=self.audio_embed, stem_size=256 )
         bottleneck_vdim = 512
-        bottleneck_dim = 64
-        bottleneck_out = 64
-        self.branch_fusion = BottleNeckTransformer(arch[2]+1, bottleneck_dim, bottleneck_vdim, self.audio_embed, bottleneck_out)
+        bottleneck_dim = 256
+        bottleneck_out = 256
+        self.branch_fusion = BottleNeckCatTransformer(arch[2]+1, bottleneck_dim, bottleneck_vdim, self.audio_embed, bottleneck_out)
 
         # init weights
         self.apply(self.__init_weights__)

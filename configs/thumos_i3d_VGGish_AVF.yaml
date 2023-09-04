@@ -19,7 +19,7 @@ model: {
   backbone_type: 'AVFusionConvTransformer',
   fpn_type: identity,
   max_buffer_len_factor: 6.0,
-  fpn_dim: 64,
+  fpn_dim: 256,
   # n_mha_win_size: -1,
   n_mha_win_size: 19,
 }
