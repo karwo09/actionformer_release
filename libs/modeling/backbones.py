@@ -250,7 +250,67 @@ class BottleNeckConcatConv(nn.Module):
             outs_list.append(x)
             
         return outs_list
+
+class BottleNeckMTB(nn.Module):
+    # code: https://github.com/google-research/scenic/blob/main/scenic/projects/mbt/model.py#L466
+    # paper: https://arxiv.org/pdf/2107.00135.pdf
     
+    def __init__(self, num_layers, in_size_video=512, in_size_audio=128, out_size=512, kernel_size=19, bottleneck_dim=64) -> None:
+        super().__init__()
+        assert kernel_size % 2 == 1, "kernel size must be odd"
+        self.num_layers = num_layers
+        
+        self.v_enc = nn.ModuleList()
+        self.a_enc = nn.ModuleList()
+        self.activations = nn.ModuleList()
+        self.ln_v = nn.LayerNorm((in_size_video,))
+        self.ln_a = nn.LayerNorm((in_size_audio,))
+        for i in range(num_layers):
+            self.v_enc.append(TransformerBlock(
+                    in_size_video+bottleneck_dim, 8,
+                    n_ds_strides=(1, 1),
+                    attn_pdrop=0.1,
+                    proj_pdrop=0.1,
+                    # mha_win_size=-1,
+                ))
+            
+            self.a_enc.append(TransformerBlock(
+                    in_size_audio+bottleneck_dim, 8,
+                    n_ds_strides=(1, 1),
+                    attn_pdrop=0.1,
+                    proj_pdrop=0.1,
+                    # mha_win_size=-1,
+                ))
+                
+            self.activations.append(nn.Tanh())
+            self.out = nn.Conv1d(in_size_video+in_size_audio, out_size, 1)
+        
+    def forward(self,out_video, out_audio, bottleneck, masks) -> torch.Tensor:
+        
+        out_video = out_video[-1]
+        out_audio = out_audio[-1]
+        mask = masks
+        for i in range(self.num_layers):
+            bottle = []
+            t_mod = out_video.shape[1]
+            in_mod = torch.cat([out_video, bottleneck], dim=1)
+            out_mod, _ = self.v_enc[i](in_mod, mask)
+            out_video = out_mod[:, :t_mod]
+            bottle.append(out_mod[:,t_mod:])
+            
+            t_mod = out_audio.shape[1]
+            in_mod = torch.cat([out_audio, bottleneck], dim=1)
+            out_mod, _ = self.a_enc[i](in_mod, mask)
+            out_audio = out_mod[:, :t_mod]
+            bottle.append(out_mod[:,t_mod:])
+            
+            bottleneck = torch.mean(torch.stack(bottle, dim=-1), dim=-1) # mean across modalities in channel dim
+        out = torch.cat([out_video, out_audio], dim=1)
+        out = self.out(out)
+        self.activations[0](out)
+        return out
+        
+        
 
 class BottleNeckCatTransformer(nn.Module):
     def __init__(self, num_necks, d_size = 256, in_size_video=512, in_size_audio=128, out_size=512, kernel_size=19) -> None:
@@ -258,11 +318,11 @@ class BottleNeckCatTransformer(nn.Module):
         assert kernel_size % 2 == 1, "kernel size must be odd"
         self.num_layers = num_necks
         
-        self.convs = nn.ModuleList()
+        self.convs_out = nn.ModuleList()
         self.transforms = nn.ModuleList()
-        self.activations = nn.ModuleList()
+        self.activations1 = nn.ModuleList()
+        self.activations2 = nn.ModuleList()
         self.normalizationV = nn.ModuleList()
-        self.normalizationA = nn.ModuleList()
         projv_f = 19
         self.ln = nn.LayerNorm((in_size_video+in_size_audio,))
         self.proj = nn.Sequential(
@@ -274,14 +334,13 @@ class BottleNeckCatTransformer(nn.Module):
                     d_size, 8,
                     n_ds_strides=(1, 1),
                     attn_pdrop=0.1,
-                    proj_pdrop=0.1,
-                    cross_attn=True,
+                    proj_pdrop=0.1
                     # mha_win_size=-1,
                 ))
                 
-            self.activations.append(nn.Tanh())
-            self.out = nn.Conv1d(d_size, out_size, 1)
-            self.out_act = nn.GELU()
+            self.activations1.append(nn.Tanh())
+            self.convs_out.append(nn.Conv1d(d_size, out_size, 1))
+            self.activations2.append(nn.GELU())
         
     def forward(self,branches_video, branches_audio, masks) -> torch.Tensor:
         
@@ -298,9 +357,9 @@ class BottleNeckCatTransformer(nn.Module):
             # em_aud = self.normalizationA[i](em_aud.transpose(1,2)).transpose(1,2)
             # x = self.convs[i](x)
             x, _ = self.transforms[i](em_cat,masks[i])
-            x = self.activations[i](x)
-            x = self.out(x)
-            x = self.out_act(x)
+            x = self.activations1[i](x)
+            x = self.convs_out[i](x)
+            x = self.activations2[i](x)
             outs_list.append(x)
             
         return outs_list
@@ -957,8 +1016,6 @@ class AVFusionConvTransformerBackbone(nn.Module):
         )
         
             
-        self.audio_encoder = ProjectionHead(128, 128, 0.1)
-            
         # stem network using (vanilla) transformer
         # self.stem_audio = nn.ModuleList()
         # for idx in range(arch[4]):
@@ -990,7 +1047,7 @@ class AVFusionConvTransformerBackbone(nn.Module):
             use_abs_pe = False,    # use absolute position embedding
             use_rel_pe = False,    # use relative position embedding
             path_pretrained=audio_pretrained_path,
-            freeze=True,
+            freeze=False,
             config_path=aconfig_path
         )
 
@@ -1012,9 +1069,10 @@ class AVFusionConvTransformerBackbone(nn.Module):
         # self.bottle_neck = BottleNeckAudioVideo(self.n_fusion_layers, d_size=n_embd//2, out_size=512, in_size_audio=self.audio_embed)
         # self.bottle_neck = BottleNeckAudioVideoRMAttnT(out_size=512, in_size_video=n_embd, in_size_audio=self.audio_embed, stem_size=256 )
         bottleneck_vdim = 512
-        bottleneck_dim = 256
-        bottleneck_out = 256
-        self.branch_fusion = BottleNeckCatTransformer(arch[2]+1, bottleneck_dim, bottleneck_vdim, self.audio_embed, bottleneck_out)
+        self.bottleneck_dim = 64
+        bottleneck_out = 512
+        # self.branch_fusion = BottleNeckCatTransformer(arch[2]+1, bottleneck_dim, bottleneck_vdim, self.audio_embed, bottleneck_out)
+        self.bottle_neck = BottleNeckMTB(3, bottleneck_vdim, self.audio_embed, bottleneck_out, bottleneck_dim=self.bottleneck_dim)
 
         # init weights
         self.apply(self.__init_weights__)
@@ -1040,7 +1098,7 @@ class AVFusionConvTransformerBackbone(nn.Module):
                 text_enc = self.text_encoder(kv) # get token embeddings
                 x_audio = self.text_embedder(text_enc) # get projection head embeddings from the CLIP model  
             elif(self.use_audio):
-               x_audio = kv.transpose(1,2)
+               x_audio = kv
             else:
                 x_audio = x_video
             
@@ -1052,43 +1110,22 @@ class AVFusionConvTransformerBackbone(nn.Module):
         
         video_out_feats, video_out_masks, video_embeddings = self.video_backbone(x_video, mask_video)
         
-        x_audio = self.audio_encoder(x_audio)
         audio_out_feats, audio_out_masks, audio_embeddings = self.audio_backbone(x_audio, mask_video)
         
-        # Filter out the layers we want to fuse
-        # tmp = []
-        # for idx in range(len(outs_video)):
-        #     if(len(outs_video) - idx <= self.n_fusion_layers):
-        #         tmp.append(x_video)
-        # outs_video = tmp
-        
-        # tmp = []
-        # for idx in range(len(outs_audio)):
-        #     if(len(outs_audio) - idx <= self.n_fusion_layers):
-        #         tmp.append(x_audio)
-        # outs_audio = tmp
-        
-        # outs_audio = []
-        # for idx in range(len(self.stem_audio)):
-        #     x_audio, mask_audio = self.stem_audio[idx](x_audio, mask_video)
-        #     if(len(self.stem_audio) - idx <= self.n_fusion_layers):
-        #         outs_audio.append(x_audio)
-                
-        
-                
-        # x = self.bottle_neck(video_embeddings, audio_embeddings, mask_video)
+        bottleneck = torch.rand((B, self.bottleneck_dim, T)).to(x_video.device)
+        x = self.bottle_neck(video_embeddings, audio_embeddings, bottleneck, mask_video)
 
-        # # prep for outputs
-        # out_feats = (x, )
-        # out_masks = (mask_video, )
+        # prep for outputs
+        out_feats = (x, )
+        out_masks = (mask_video, )
 
-        # # main branch with downsampling
-        # for idx in range(len(self.branch)):
-        #     x, mask_video = self.branch[idx](x, mask_video)
-        #     out_feats += (x, )
-        #     out_masks += (mask_video, )
+        # main branch with downsampling
+        for idx in range(len(self.branch)):
+            x, mask_video = self.branch[idx](x, mask_video)
+            out_feats += (x, )
+            out_masks += (mask_video, )
         
-        out_feats = self.branch_fusion(video_out_feats, audio_out_feats, audio_out_masks)
+        # out_feats = self.branch_fusion(video_out_feats, audio_out_feats, audio_out_masks)
         
 
         return out_feats, video_out_masks

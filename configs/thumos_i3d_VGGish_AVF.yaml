@@ -19,7 +19,7 @@ model: {
   backbone_type: 'AVFusionConvTransformer',
   fpn_type: identity,
   max_buffer_len_factor: 6.0,
-  fpn_dim: 256,
+  fpn_dim: 512,
   # n_mha_win_size: -1,
   n_mha_win_size: 19,
 }
@@ -40,9 +40,11 @@ train_cfg: {
   dropout: 0.1,
   use_text: False,
   use_audio: True,
+  # aconfig_path: '/home/karolwojtulewicz/code/actionformer_release/configs/thumos_i3d.yaml',
   aconfig_path: '/home/karolwojtulewicz/code/actionformer_release/configs/thumos_VGGish.yaml',
   vconfig_path: '/home/karolwojtulewicz/code/actionformer_release/configs/thumos_i3d.yaml',
   aformer_path: '/home/karolwojtulewicz/code/actionformer_release/pretrained/thumos_i3d_reproduce/epoch_034.pth.tar',
+  # audio_pretrained_path: '/home/karolwojtulewicz/code/actionformer_release/pretrained/thumos_i3d_reproduce/epoch_034.pth.tar',
   audio_pretrained_path: '/home/karolwojtulewicz/code/actionformer_release/ckpt/thumos_VGGish_reproduce/_epoch_035.pth.tar',
   freeze_aformer: True,
 }
