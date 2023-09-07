@@ -255,19 +255,18 @@ class BottleNeckMTB(nn.Module):
     # code: https://github.com/google-research/scenic/blob/main/scenic/projects/mbt/model.py#L466
     # paper: https://arxiv.org/pdf/2107.00135.pdf
     
-    def __init__(self, num_layers, in_size_video=512, in_size_audio=128, out_size=512, kernel_size=19, bottleneck_dim=64) -> None:
+    def __init__(self, num_layers, in_size_video=512, in_size_audio=128, out_size=512, kernel_size=19, bottleneck_dim=64, n_head=4) -> None:
         super().__init__()
         assert kernel_size % 2 == 1, "kernel size must be odd"
         self.num_layers = num_layers
         
         self.v_enc = nn.ModuleList()
         self.a_enc = nn.ModuleList()
-        self.activations = nn.ModuleList()
         self.ln_v = nn.LayerNorm((in_size_video,))
         self.ln_a = nn.LayerNorm((in_size_audio,))
         for i in range(num_layers):
             self.v_enc.append(TransformerBlock(
-                    in_size_video+bottleneck_dim, 8,
+                    in_size_video+bottleneck_dim, n_head,
                     n_ds_strides=(1, 1),
                     attn_pdrop=0.1,
                     proj_pdrop=0.1,
@@ -275,15 +274,14 @@ class BottleNeckMTB(nn.Module):
                 ))
             
             self.a_enc.append(TransformerBlock(
-                    in_size_audio+bottleneck_dim, 8,
+                    in_size_audio+bottleneck_dim, n_head,
                     n_ds_strides=(1, 1),
                     attn_pdrop=0.1,
                     proj_pdrop=0.1,
                     # mha_win_size=-1,
                 ))
                 
-            self.activations.append(nn.Tanh())
-            self.out = nn.Conv1d(in_size_video+in_size_audio, out_size, 1)
+        self.out = nn.Conv1d(in_size_video+in_size_audio, out_size, 1)
         
     def forward(self,out_video, out_audio, bottleneck, masks) -> torch.Tensor:
         
@@ -307,7 +305,6 @@ class BottleNeckMTB(nn.Module):
             bottleneck = torch.mean(torch.stack(bottle, dim=-1), dim=-1) # mean across modalities in channel dim
         out = torch.cat([out_video, out_audio], dim=1)
         out = self.out(out)
-        self.activations[0](out)
         return out
         
         
@@ -1069,10 +1066,10 @@ class AVFusionConvTransformerBackbone(nn.Module):
         # self.bottle_neck = BottleNeckAudioVideo(self.n_fusion_layers, d_size=n_embd//2, out_size=512, in_size_audio=self.audio_embed)
         # self.bottle_neck = BottleNeckAudioVideoRMAttnT(out_size=512, in_size_video=n_embd, in_size_audio=self.audio_embed, stem_size=256 )
         bottleneck_vdim = 512
-        self.bottleneck_dim = 64
+        self.bottleneck_dim = 32
         bottleneck_out = 512
         # self.branch_fusion = BottleNeckCatTransformer(arch[2]+1, bottleneck_dim, bottleneck_vdim, self.audio_embed, bottleneck_out)
-        self.bottle_neck = BottleNeckMTB(3, bottleneck_vdim, self.audio_embed, bottleneck_out, bottleneck_dim=self.bottleneck_dim)
+        self.bottle_neck = BottleNeckMTB(3, bottleneck_vdim, self.audio_embed, bottleneck_out, bottleneck_dim=self.bottleneck_dim, n_head=8)
 
         # init weights
         self.apply(self.__init_weights__)

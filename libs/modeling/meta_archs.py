@@ -1,4 +1,5 @@
 import math
+import os
 import numpy as np
 import torch
 from torch import nn
@@ -564,6 +565,19 @@ class PtTransformer(nn.Module):
         # list of prediction targets
         gt_cls_labels, gt_offsets, gt_activation_labels = self.label_points(
             points, gt_segments, gt_labels, gt_labels)
+        
+        # if not os.path.exists('./gt_labels.npy'):
+        if True:
+            # save the gt labels for visualization in a npy file
+            np.save(
+                './{}_gt.npy'.format(video_list[0]["video_id"]),
+                {
+                    'gt_cls_labels': gt_cls_labels,
+                    'gt_offsets': gt_offsets,
+                    'gt_activation_labels': gt_activation_labels
+                }
+            )
+            gt_labels = np.load('./gt_labels.npy', allow_pickle=True).item()
         if self.training:
 
             # compute the loss and return
